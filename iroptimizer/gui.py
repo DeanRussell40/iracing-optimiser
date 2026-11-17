@@ -19,7 +19,7 @@ import math
 
 from .report import CAT
 from .safety import RENDERER_FILES
-from . import __version__, i18n, sharing, syscheck, updates, vr, apply as applier, config_reader, diagnostics, drift, fov, hardware, pipeline, presentmon, profiles, userprofiles
+from . import __version__, autorec, i18n, sharing, syscheck, updates, vr, apply as applier, config_reader, diagnostics, drift, fov, hardware, pipeline, presentmon, profiles, userprofiles
 
 APP = "iRacing Optimizer"
 PRIO_TAG = {1: "p1", 2: "p2", 3: "p3"}
@@ -86,7 +86,7 @@ class CheckTree(ttk.Treeview):
 
 
 class App(tk.Tk):
-    def __init__(self):
+    def __init__(self, start_hidden: bool = False):
         super().__init__()
         self.title(f"{APP} {__version__}")
         self.geometry("1180x760")
@@ -107,8 +107,22 @@ class App(tk.Tk):
         self.mon_thread: threading.Thread | None = None
         self.mon_stop = threading.Event()
 
+        # Grabación automática (v0.11): se activa en el Monitor; «--tray» (inicio con Windows) la fuerza
+        self.tray = None
+        self._arm = autorec.AutoArm()
+        self._auto_session = False
+        self._notify_after = False
+        self._tray_hint_shown = False
+        self.auto_rec = tk.BooleanVar(value=bool(i18n.load_settings().get("auto_record")) or start_hidden)
+
         self._style()
         self._build()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        if self.auto_rec.get():
+            self._ensure_tray()
+        if start_hidden and self.tray and self.tray.ok:
+            self.withdraw()
+        self.after(5000, self._auto_tick)
         self.after(100, self._poll)
         self._bg(self._load_all, _("Cargando equipo y configuración…"))
         self.after(1500, self._update_startup)
@@ -348,6 +362,18 @@ class App(tk.Tk):
         self.hz_var = tk.DoubleVar(value=4.0)
         ttk.Spinbox(row, from_=1, to=10, increment=1, width=4, textvariable=self.hz_var).pack(side="left", padx=4)
 
+        autorow = ttk.Frame(f)
+        autorow.pack(anchor="w", pady=(0, 6))
+        ttk.Checkbutton(autorow, text=_("Grabar automáticamente al abrir iRacing"), variable=self.auto_rec,
+                        command=self._auto_toggled).pack(side="left")
+        self.autostart_var = tk.BooleanVar(value=autorec.autostart_enabled())
+        cb = ttk.Checkbutton(autorow, text=_("Iniciar con Windows (en la bandeja)"), variable=self.autostart_var,
+                             command=self._autostart_toggled)
+        cb.pack(side="left", padx=16)
+        if not autorec.autostart_command():
+            cb.configure(state="disabled")
+        ttk.Label(autorow, text=_("Al cerrar la ventana sigue en la bandeja; las sesiones de menos de 3 min en pista se descartan."),
+                  style="Muted.TLabel").pack(side="left", padx=6)
         pmrow = ttk.Frame(f)
         pmrow.pack(anchor="w")
         self.use_pm = tk.BooleanVar(value=True)
@@ -792,9 +818,79 @@ class App(tk.Tk):
         else:
             messagebox.showwarning(APP, _("No se pudo lanzar la petición. Puedes quitarlo a mano en Administración de equipos → Usuarios y grupos locales → Grupos."))
 
-    def start_monitor(self):
+    # ------------------------------------------------------------------ grabación automática y bandeja
+    def _ensure_tray(self):
+        if self.tray and self.tray.ok:
+            return
+        from .tray import Tray
+        self.tray = Tray(self, resource("icon.png"), self._show_window, self._tray_toggle_auto,
+                         lambda: self.auto_rec.get(), self.quit_app)
+
+    def _auto_toggled(self):
+        on = self.auto_rec.get()
+        i18n.save_setting("auto_record", on)
+        if on:
+            self._ensure_tray()
+            self._log(_("Grabación automática activada: empezará sola al abrir iRacing."))
+        if self.tray:
+            self.tray.refresh()
+
+    def _tray_toggle_auto(self):
+        self.auto_rec.set(not self.auto_rec.get())
+        self._auto_toggled()
+        if not self.auto_rec.get():
+            self._show_window()
+
+    def _autostart_toggled(self):
+        on = self.autostart_var.get()
+        if not autorec.set_autostart(on):
+            self.autostart_var.set(autorec.autostart_enabled())
+            messagebox.showwarning(APP, _("No se pudo cambiar el inicio con Windows."))
+            return
+        if on and not self.auto_rec.get():
+            self.auto_rec.set(True)
+            self._auto_toggled()
+
+    def _auto_tick(self):
+        try:
+            if self.auto_rec.get():
+                busy = bool(self.mon_thread and self.mon_thread.is_alive())
+                if self._arm.step(autorec.sim_running(), busy):
+                    self.start_monitor(auto=True)
+        finally:
+            self.after(5000, self._auto_tick)
+
+    def _show_window(self):
+        self.deiconify()
+        self.lift()
+        try:
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def on_close(self):
+        if self.auto_rec.get() and self.tray and self.tray.ok:
+            self.withdraw()
+            if not self._tray_hint_shown:
+                self._tray_hint_shown = True
+                self.tray.notify(_("Sigo en la bandeja y grabaré cuando abras iRacing. Para salir: clic derecho en el icono → Salir."))
+            return
+        self.quit_app()
+
+    def quit_app(self):
+        self.mon_stop.set()
+        if self.tray:
+            self.tray.stop()
+        self.destroy()
+
+    def start_monitor(self, auto: bool = False):
+        if self.mon_thread and self.mon_thread.is_alive():
+            return
         if not self.cfg:
-            messagebox.showwarning(APP, _("Primero carga la carpeta de iRacing."))
+            if auto:
+                self._log(_("Grabación automática: no encuentro la carpeta de iRacing; no se graba."), alert=True)
+            else:
+                messagebox.showwarning(APP, _("Primero carga la carpeta de iRacing."))
             return
         try:
             import irsdk  # noqa: F401  (solo comprobar que está)
@@ -809,8 +905,16 @@ class App(tk.Tk):
             self._pm_refresh_status()
             if self._pm_exe and presentmon.can_capture():
                 pm_exe = self._pm_exe
+            elif auto:
+                if self._pm_exe:
+                    self._log(_("Grabación automática sin PresentMon: falta el permiso de Windows (botón «Dar permiso…»)."))
             elif self._pm_exe and not messagebox.askyesno(APP, _("PresentMon necesita un permiso de Windows que aún no tienes (botón «Dar permiso…»).\n\n¿Grabar ahora sin PresentMon?")):
                 return
+        self._auto_session = auto
+        if auto:
+            self._log(_("iRacing detectado: grabación automática en marcha."))
+            if self.tray:
+                self.tray.notify(_("iRacing detectado: grabando la sesión."))
         self.mon_stop.clear()
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -856,10 +960,15 @@ class App(tk.Tk):
                 self.btn_start.configure(state="normal")
                 self.btn_stop.configure(state="disabled")
                 self.live["state"].set(_("Parado"))
-                if csv_path:
+                if csv_path and self._auto_session and autorec.too_short(csv_path, float(self.hz_var.get() or 4)):
+                    autorec.discard(csv_path)
+                    self._log(_("Sesión de menos de 3 min en pista: descartada."))
+                elif csv_path:
                     self._log(f"Guardado: {csv_path}")
-                    if self.auto_analyze.get():
+                    if self.auto_analyze.get() or self._auto_session:
+                        self._notify_after = self._auto_session
                         self.analyze(csv_path)
+                self._auto_session = False
             self.ui(done)
 
         self.mon_thread = threading.Thread(target=lambda: self._safe(run), daemon=True)
@@ -973,6 +1082,12 @@ class App(tk.Tk):
                       checkable=False, tags=("info",))
         self._refresh_profiles()
         self._show_diag()
+        if self._notify_after:
+            self._notify_after = False
+            if self.tray:
+                self.tray.notify(_("{track}: {fps} FPS de media · te limita {lim}. Abre la app para ver las recomendaciones.",
+                                   track=meta.get("track") or _("Sesión"), fps=f"{f['mean']:.0f}", lim=BN[top]),
+                                 _("Sesión analizada"))
         self.nb.select(self.tab_diag)
         self.status(_("Análisis listo. Informe: {p0}", p0=r.html_path))
 
@@ -1467,7 +1582,7 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("empg80.iRacingOptimizer")
         except Exception:
             pass
-    App().mainloop()
+    App(start_hidden="--tray" in sys.argv[1:]).mainloop()
 
 
 if __name__ == "__main__":

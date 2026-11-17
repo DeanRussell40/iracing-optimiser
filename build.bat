@@ -9,4 +9,4 @@ py packaging\make_version_info.py || exit /b 1
 py -m PyInstaller --noconfirm --onefile --windowed --noupx --name iRacingOptimizer --icon assets\icon.ico --version-file build\version_info.txt ^
   --add-data "assets/icon.png;assets" --add-data "assets/icon.ico;assets" ^
   --add-data "tools/PresentMon.exe;tools" --add-data "THIRD_PARTY_NOTICES.md;." ^
-  --hidden-import irsdk --hidden-import pynvml --hidden-import yaml app.py
+  --hidden-import irsdk --hidden-import pynvml --hidden-import yaml --hidden-import pystray._win32 app.py

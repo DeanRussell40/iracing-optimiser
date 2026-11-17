@@ -3,3 +3,6 @@ pyirsdk==1.3.7
 PyYAML==6.0.3
 psutil==7.2.2
 nvidia-ml-py==13.615.71 ; platform_system == "Windows"
+pystray==0.19.5 ; platform_system == "Windows"
+Pillow==12.3.0 ; platform_system == "Windows"
+six==1.17.0 ; platform_system == "Windows"

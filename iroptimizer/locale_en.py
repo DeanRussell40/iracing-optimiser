@@ -339,6 +339,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                         '{p1:.2f} s',
  'AMD Software → Pantalla → AMD FreeSync: activado.': 'AMD Software → Display → AMD FreeSync: on.',
  'Abrir carpeta': 'Open folder',
+ 'Abrir iRacing Optimizer': 'Open iRacing Optimizer',
  'Abrir informe HTML': 'Open HTML report',
  'Abrir sesión (.csv)…': 'Open session (.csv)…',
  'Activa EXPO (AMD) o XMP (Intel) en la BIOS.': 'Enable EXPO (AMD) or XMP (Intel) in the BIOS.',
@@ -384,6 +385,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                                                                                                         'cap.',
  'Ajustes actuales del archivo gráfico': 'Current settings of the graphics file',
  'Ajustes distintos entre A y B:': 'Settings that differ between A and B:',
+ 'Al cerrar la ventana sigue en la bandeja; las sesiones de menos de 3 min en pista se descartan.': 'Closing the window keeps it in the tray; sessions with less than 3 min on track are discarded.',
  'Algún núcleo al ≥ 98 % el {sat:.0f} % del tiempo': 'Some core at ≥ 98 % for {sat:.0f} % of the '
                                                      'time',
  'Alta pero estable: es la distancia al servidor (p. ej. servidores de EE. UU. desde Europa) y no se arregla en casa. Mientras no haya picos, iRacing la compensa bien.': 'High '
@@ -1417,10 +1419,15 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                                                     'and '
                                                                                                     'system '
                                                                                                     'diagnostics.',
+ 'Grabación automática': 'Auto-recording',
+ 'Grabación automática activada: empezará sola al abrir iRacing.': 'Auto-recording on: it will start by itself when you open iRacing.',
+ 'Grabación automática sin PresentMon: falta el permiso de Windows (botón «Dar permiso…»).': 'Auto-recording without PresentMon: the Windows permission is missing ("Grant permission…" button).',
+ 'Grabación automática: no encuentro la carpeta de iRacing; no se graba.': 'Auto-recording: iRacing folder not found; not recording.',
  'Grabación detenida.': 'Recording stopped.',
  'Grabación en segundo plano de Xbox Game Bar': 'Xbox Game Bar background recording',
  'Grabación instantánea de NVIDIA desactivada si emites con OBS': 'NVIDIA Instant Replay off if you stream with OBS',
  'Grabando': 'Recording',
+ 'Grabar automáticamente al abrir iRacing': 'Record automatically when iRacing opens',
  'Gradas: mismo motivo, coste de CPU en rectas principales.': 'Grandstands: same reason, CPU cost '
                                                               'on main straights.',
  'Gradas: muchas draw calls en rectas principales y zonas con tribunas.': 'Grandstands: many draw '
@@ -1492,6 +1499,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                             'indexer: exclude the '
                                                                             'iRacing folders from '
                                                                             'indexing.',
+ 'Iniciar con Windows (en la bandeja)': 'Start with Windows (in the tray)',
  'Instala iRacing en un SSD NVMe y deja 1-2 vueltas de calentamiento: la primera vuelta carga texturas.': 'Install '
                                                                                                           'iRacing '
                                                                                                           'on '
@@ -2080,6 +2088,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
  'No llegas a la frecuencia del visor': 'Not reaching the headset refresh rate',
  'No se detecta software de VR.': 'No VR software detected.',
  'No se pudieron leer los datos del sistema (solo en Windows).': 'Could not read the system data (Windows only).',
+ 'No se pudo cambiar el inicio con Windows.': 'Could not change the start-with-Windows setting.',
  'No se pudo lanzar la petición. Alternativa: ejecuta iRacing Optimizer como administrador.': 'Could '
                                                                                               'not '
                                                                                               'launch '
@@ -2528,6 +2537,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                              'software detected '
                                                                              'during recording.',
  'Ruta fuera de la carpeta de iRacing': 'Path outside the iRacing folder',
+ 'Salir': 'Quit',
  'Se usa {f} para esta sesión.': 'Using {f} for this session.',
  'Sección': 'Section',
  'Segundos máximos de grabación': 'Maximum recording seconds',
@@ -2553,7 +2563,9 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                                           'headset).',
  'Sesión VR: se usa {f} (el archivo gráfico de VR).': 'VR session: using {f} (the VR graphics '
                                                       'file).',
+ 'Sesión analizada': 'Session analyzed',
  'Sesión compartida': 'Shared session',
+ 'Sesión de menos de 3 min en pista: descartada.': 'Less than 3 min on track: session discarded.',
  'Sesión en VR': 'VR session',
  'Sesión en VR: frecuencia del visor (p. ej. 90)': 'VR session: headset refresh rate (e.g. 90)',
  'Sesión exportada sin datos personales (sin nombres de procesos, rutas ni ajustes de audio/controles):\n{p}': 'Session '
@@ -2680,6 +2692,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                                                                                       'and '
                                                                                                                                       'record '
                                                                                                                                       'again.',
+ 'Sigo en la bandeja y grabaré cuando abras iRacing. Para salir: clic derecho en el icono → Salir.': "I'm still in the tray and will record when you open iRacing. To quit: right-click the icon → Quit.",
  'SimHub: desactiva plugins/dashboards que no uses y baja su tasa de refresco.': 'SimHub: disable '
                                                                                  'plugins/dashboards '
                                                                                  "you don't use "
@@ -3322,6 +3335,8 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                       "you don't look at and limit "
                                                                       'their refresh rate.',
  'iRacing desconectado. Fin de la grabación.': 'iRacing disconnected. Recording finished.',
+ 'iRacing detectado: grabación automática en marcha.': 'iRacing detected: auto-recording started.',
+ 'iRacing detectado: grabando la sesión.': 'iRacing detected: recording the session.',
  'iRacing en ventana o ventana sin bordes pasa por el compositor de Windows. Con esta opción usa el modo de presentación moderno: menos latencia y G-SYNC/FreeSync más fiable.': 'iRacing in windowed or borderless mode goes through the Windows compositor. With this option it uses the modern presentation mode: lower latency and more reliable G-SYNC/FreeSync.',
  'iRacing está en VR: la sesión se analizará como VR.': 'iRacing is running in VR: the session '
                                                         'will be analysed as VR.',
@@ -3487,6 +3502,7 @@ CATALOG = {'\n\nQué hacer:\n': '\n\nWhat to do:\n',
                                                                                                                                              'choose '
                                                                                                                                              'another '
                                                                                                                                              'file.',
+ '{track}: {fps} FPS de media · te limita {lim}. Abre la app para ver las recomendaciones.': '{track}: {fps} FPS average · limited by {lim}. Open the app to see the recommendations.',
  '{typ} a {conf} MT/s · {n} módulos': '{typ} at {conf} MT/s · {n} modules',
  '¡Ojo! Circuitos distintos: la comparación es orientativa.': 'Warning: different tracks, the '
                                                               'comparison is only indicative.',

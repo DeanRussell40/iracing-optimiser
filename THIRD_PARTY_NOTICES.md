@@ -29,3 +29,9 @@ OR OTHER DEALINGS IN THE SOFTWARE.
 ## pyirsdk, psutil, PyYAML, nvidia-ml-py
 
 Dependencias de Python incluidas en el ejecutable, cada una bajo su propia licencia (MIT, BSD-3-Clause, MIT y BSD-3-Clause respectivamente).
+
+## pystray (LGPL-3.0), Pillow (MIT-CMU), six (MIT)
+
+Desde la v0.11, el icono de la bandeja del sistema usa pystray (https://github.com/moses-palmer/pystray), con licencia GNU LGPL v3, y sus dependencias Pillow (https://python-pillow.org, licencia MIT-CMU/HPND) y six (licencia MIT). Se incluyen sin modificar. Como el código de iRacing Optimizer y su script de compilación son públicos, puedes recompilar el .exe con otra versión de pystray (cambia la versión en `requirements.txt` y ejecuta `build.bat`); el texto de la LGPL está en https://www.gnu.org/licenses/lgpl-3.0.html.
+
+Since v0.11 the system tray icon uses pystray (LGPL-3.0) and its dependencies Pillow (MIT-CMU/HPND) and six (MIT), included unmodified. Because the app's source and build script are public, you can rebuild the .exe with a different pystray version (change it in `requirements.txt` and run `build.bat`).
