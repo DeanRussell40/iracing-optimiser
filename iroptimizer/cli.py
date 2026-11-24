@@ -159,6 +159,30 @@ def cmd_demo(args):
     print(_("\nPrueba apply en los ini de demo:\n  python -m iroptimizer apply \"{json_p}\" --ini-dir \"{ini_dir}\" --dry-run", json_p=json_p, ini_dir=ini_dir))
 
 
+def cmd_bench(args):
+    from . import bench, presentmon
+    out = _out_dir(args.out)
+    exe = presentmon.find_exe([out / "tools"])
+    if not exe:
+        raise RuntimeError("PresentMon not found; the bench needs it.")
+    cfg = bench.BenchConfig(seconds=args.seconds, runs=args.runs, warmup_runs=args.warmup,
+                            settle_s=args.settle, start_frame=args.frame)
+    bdir = bench.run_bench(cfg, out, bench.IRSDKDriver(), lambda p: presentmon.Capture(exe, p))
+    s = bench.analyze_bundle(bdir)
+    print(s["repeatability"]["verdict_text"])
+    print(f"Report: {bdir / 'report.html'}")
+    if not args.no_browser:
+        webbrowser.open((bdir / "report.html").resolve().as_uri())
+
+
+def cmd_bench_report(args):
+    from . import bench
+    s = bench.analyze_bundle(Path(args.bundle))
+    print(s["repeatability"]["verdict_text"])
+    if not args.no_browser:
+        webbrowser.open((Path(args.bundle) / "report.html").resolve().as_uri())
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="iroptimizer", description=_("Optimizador de gráficos y rendimiento para iRacing"))
     common = argparse.ArgumentParser(add_help=False)
@@ -221,6 +245,21 @@ def main(argv=None):
     d.add_argument("--out")
     d.add_argument("--no-browser", action="store_true")
     d.set_defaults(fn=cmd_demo)
+
+    b = sub.add_parser("bench", parents=[common], help="Replay bench: repeat a replay segment and measure repeatability")
+    b.add_argument("--out")
+    b.add_argument("--seconds", type=float, default=60.0)
+    b.add_argument("--runs", type=int, default=5)
+    b.add_argument("--warmup", type=int, default=1)
+    b.add_argument("--settle", type=float, default=4.0)
+    b.add_argument("--frame", type=int, help="Replay frame to start from (default: current position)")
+    b.add_argument("--no-browser", action="store_true")
+    b.set_defaults(fn=cmd_bench)
+
+    br = sub.add_parser("bench-report", parents=[common], help="Re-analyse a bench bundle folder")
+    br.add_argument("bundle")
+    br.add_argument("--no-browser", action="store_true")
+    br.set_defaults(fn=cmd_bench_report)
 
     args = p.parse_args(argv)
     try:
