@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .i18n import _
 
+import json
 import os
 import queue
 import subprocess
@@ -210,6 +211,7 @@ class App(tk.Tk):
         self._tab_equipo()
         self._tab_sistema()
         self._tab_monitor()
+        self._tab_bench()
         self._tab_diagnostico()
         self._tab_analisis()
         self._tab_perfiles()
@@ -417,6 +419,86 @@ class App(tk.Tk):
         self.mon_log.tag_configure("alert", foreground="#c0392b")
         self.mon_log.pack(fill="both", expand=True, pady=(4, 0))
         ttk.Label(f, text=_("Las sesiones se guardan en {p0}", p0=self.out_dir), style="Muted.TLabel").pack(anchor="w", pady=4)
+
+    # ------------------------------------------------------------------ replay bench (milestone 1)
+    def _tab_bench(self):
+        f = ttk.Frame(self.nb, padding=14)
+        self.nb.add(f, text="Replay bench")
+        steps = ("Checks whether measurements on this PC are repeatable, and whether iRacing is on the Independent Flip "
+                 "path (needed for G-Sync). It changes no settings.\n\n"
+                 "1. In iRacing, open a replay with traffic (a race start is ideal).\n"
+                 "2. Pick the car and the cockpit camera, and move the replay to where the segment should start.\n"
+                 "3. Click Start and leave the PC alone. The bench seeks back to that point for every run.")
+        ttk.Label(f, text=steps, justify="left", wraplength=1000).pack(anchor="w")
+        row = ttk.Frame(f)
+        row.pack(anchor="w", pady=12)
+        self.bench_vars = {}
+        for key, label, default, lo, hi, inc in (("seconds", "Seconds per run", 60, 15, 600, 5),
+                                                ("runs", "Runs", 5, 3, 20, 1),
+                                                ("warmup", "Warm-up runs", 1, 0, 3, 1)):
+            ttk.Label(row, text=label).pack(side="left", padx=(0, 4))
+            v = tk.IntVar(value=default)
+            ttk.Spinbox(row, from_=lo, to=hi, increment=inc, width=5, textvariable=v).pack(side="left", padx=(0, 16))
+            self.bench_vars[key] = v
+        self.btn_bench = ttk.Button(row, text="▶  Start bench", style="Accent.TButton", command=self.start_bench)
+        self.btn_bench.pack(side="left", padx=(8, 0))
+        self.btn_bench_stop = ttk.Button(row, text="■  Stop", command=self.stop_bench, state="disabled")
+        self.btn_bench_stop.pack(side="left", padx=8)
+        self.bench_eta = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.bench_eta, style="Muted.TLabel").pack(anchor="w")
+        self.bench_log = tk.Text(f, height=14, relief="flat", font=("Consolas", 9))
+        self.bench_log.pack(fill="both", expand=True, pady=(6, 0))
+        ttk.Label(f, text=f"Results are saved in {self.out_dir / 'bench'}. Send back the bench_*.zip file for analysis.",
+                  style="Muted.TLabel").pack(anchor="w", pady=4)
+        self.bench_stop_ev = threading.Event()
+
+    def _bench_log(self, text):
+        def add():
+            self.bench_log.insert("end", time.strftime("%H:%M:%S  ") + text + "\n")
+            self.bench_log.see("end")
+        self.ui(add)
+
+    def start_bench(self):
+        from . import bench
+        exe = presentmon.find_exe([self.out_dir / "tools"])
+        if not exe:
+            messagebox.showerror(APP, "PresentMon was not found. The bench needs it.")
+            return
+        if self.mon_thread and self.mon_thread.is_alive():
+            messagebox.showerror(APP, "Stop the session recording first.")
+            return
+        cfg = bench.BenchConfig(seconds=float(self.bench_vars["seconds"].get()), runs=int(self.bench_vars["runs"].get()),
+                                warmup_runs=int(self.bench_vars["warmup"].get()))
+        total = (cfg.runs + cfg.warmup_runs) * (cfg.seconds + cfg.settle_s + 2)
+        self.bench_eta.set(f"Takes about {total / 60:.0f} minutes. Don't touch the PC while it runs.")
+        self.bench_stop_ev.clear()
+        self.btn_bench.configure(state="disabled")
+        self.btn_bench_stop.configure(state="normal")
+
+        def run():
+            try:
+                bdir = bench.run_bench(cfg, self.out_dir, bench.IRSDKDriver(), lambda p: presentmon.Capture(exe, p),
+                                       log=self._bench_log, stop=self.bench_stop_ev)
+                s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
+                self._bench_log(s["repeatability"]["verdict_text"])
+                pm = s.get("present_mode") or {}
+                if pm.get("available"):
+                    self._bench_log(f"Present path: {pm['dominant']} ({pm['dominant_pct']:.0f}% of frames)")
+                self._bench_log(f"Report: {bdir / 'report.html'}")
+                webbrowser.open((bdir / "report.html").resolve().as_uri())
+            except bench.Aborted:
+                self._bench_log("Stopped.")
+            except Exception as e:
+                self._bench_log(f"Error: {e}")
+            finally:
+                def done():
+                    self.btn_bench.configure(state="normal")
+                    self.btn_bench_stop.configure(state="disabled")
+                self.ui(done)
+        threading.Thread(target=run, daemon=True).start()
+
+    def stop_bench(self):
+        self.bench_stop_ev.set()
 
     def _tab_diagnostico(self):
         f = ttk.Frame(self.nb, padding=10)

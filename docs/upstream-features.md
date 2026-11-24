@@ -1,35 +1,35 @@
-<p align="center"><img src="docs/logo.png" width="128" alt="iRacing Optimizer"></p>
+<p align="center"><img src="logo.png" width="128" alt="iRacing Optimizer"></p>
 
 # iRacing Optimizer
 
-**English** · [Español](README.md)
+**English** · [Español](README.es.md)
 
 iRacing Optimizer reads your iRacing and PC configuration and records a session (a race works best). From that it tells you **what is limiting you** (CPU/engine, GPU or the FPS cap) and proposes specific values for your `.ini` files. Changes are applied with one click, and a backup is always made first.
 
-![Analysis and recommendations](docs/en/analysis.png)
+![Analysis and recommendations](en/analysis.png)
 
 <details>
 <summary>More screenshots</summary>
 
 **System** (BIOS, RAM, graphics card, displays and Windows check)
 
-![System](docs/en/system.png)
+![System](en/system.png)
 
 **Diagnostics**
 
-![Diagnostics](docs/en/diag.png)
+![Diagnostics](en/diag.png)
 
 **FOV** (single curved monitor)
 
-![FOV](docs/en/fov.png)
+![FOV](en/fov.png)
 
 **My profiles** (monitor and VR)
 
-![My profiles](docs/en/my.png)
+![My profiles](en/my.png)
 
 **Profiles** (tuned to the measured session)
 
-![Profiles](docs/en/profiles.png)
+![Profiles](en/profiles.png)
 
 </details>
 
