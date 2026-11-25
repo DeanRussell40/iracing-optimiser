@@ -47,6 +47,9 @@ def open_path(p: Path):
         subprocess.Popen(["/usr/bin/xdg-open", str(p)])  # noqa: S603 (solo desarrollo en Linux)
 
 
+LOCK_NOTE = "🔒 Locked: settings are only changed once a Replay bench A/B test proves they help."
+
+
 class CheckTree(ttk.Treeview):
     """Treeview con una primera columna de casillas que se marcan al hacer clic."""
 
@@ -428,7 +431,9 @@ class App(tk.Tk):
                  "path (needed for G-Sync). It changes no settings.\n\n"
                  "1. In iRacing, open a replay with traffic (a race start is ideal).\n"
                  "2. Pick the car and the cockpit camera, and move the replay to where the segment should start.\n"
-                 "3. Click Start and leave the PC alone. The bench seeks back to that point for every run.")
+                 "3. Click Start and leave the PC alone. The bench seeks back to that point for every run.\n\n"
+                 "Before you start: turn off every frame rate cap (NVIDIA app Max Frame Rate, iRacing FPS limit, V-Sync). "
+                 "A capped run is reported as NOT VALID because a cap hides the PC's real headroom.")
         ttk.Label(f, text=steps, justify="left", wraplength=1000).pack(anchor="w")
         row = ttk.Frame(f)
         row.pack(anchor="w", pady=12)
@@ -608,14 +613,16 @@ class App(tk.Tk):
         ttk.Button(btns, text=_("Marcar todo"), command=lambda: self.rec_tree.set_all(lambda r: bool(r.get("key")))).pack(side="left")
         ttk.Button(btns, text=_("Desmarcar todo"), command=lambda: self.rec_tree.set_all(lambda r: False)).pack(side="left", padx=4)
         ttk.Label(btns, text=_("  Doble clic: ver motivo completo"), style="Muted.TLabel").pack(side="left")
-        ttk.Button(btns, text=_("Aplicar seleccionados (con copia de seguridad)"), style="Accent.TButton",
-                   command=self.apply_selected).pack(side="right")
+        self._lockable(ttk.Button(btns, text=_("Aplicar seleccionados (con copia de seguridad)"), style="Accent.TButton",
+                                  command=self.apply_selected)).pack(side="right")
+        self._lock_label(btns).pack(side="right", padx=8)
 
     def _tab_perfiles(self):
         f = ttk.Frame(self.nb, padding=10)
         self.nb.add(f, text=_("Perfiles"))
         self.prof_hint = tk.StringVar(value=_("Perfiles genéricos. Si cargas una sesión, el tope de FPS y el LOD dinámico se ajustan a tu medición."))
         ttk.Label(f, textvariable=self.prof_hint, style="Muted.TLabel", wraplength=1100).pack(anchor="w", pady=(0, 8))
+        self._lock_label(f).pack(anchor="w", pady=(0, 6))
         cols = ttk.Frame(f)
         cols.pack(fill="both", expand=True)
         self.prof_trees = {}
@@ -631,8 +638,8 @@ class App(tk.Tk):
                 tv.heading(c, text=t)
                 tv.column(c, width=w, anchor="w")
             tv.pack(fill="both", expand=True, pady=6)
-            ttk.Button(lf, text=_("Aplicar «{p0}»", p0=p['title']), style="Accent.TButton",
-                       command=lambda n=name: self.apply_profile(n)).pack(fill="x")
+            self._lockable(ttk.Button(lf, text=_("Aplicar «{p0}»", p0=p['title']), style="Accent.TButton",
+                                      command=lambda n=name: self.apply_profile(n))).pack(fill="x")
             self.prof_trees[name] = tv
 
     def _tab_copias(self):
@@ -640,11 +647,17 @@ class App(tk.Tk):
         self.nb.add(f, text=_("Copias de seguridad"))
         ttk.Label(f, text=_("Cada vez que aplicas cambios se guarda una copia de todos los .ini de iRacing."),
                   style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(f, text=("The first time the app opens your iRacing folder it saves a copy of your settings "
+                           "(the oldest entry below, marked 'original'). 'Restore original settings' puts that "
+                           "copy back in one click. Close iRacing first."),
+                  style="Muted.TLabel", wraplength=1100, justify="left").pack(anchor="w")
         self.bk_list = tk.Listbox(f, height=14, font=("Consolas", 10))
         self.bk_list.pack(fill="both", expand=True, pady=8)
         row = ttk.Frame(f)
         row.pack(fill="x")
-        ttk.Button(row, text=_("Restaurar seleccionada"), style="Accent.TButton", command=self.restore_selected).pack(side="left")
+        ttk.Button(row, text="↺  Restore original settings", style="Accent.TButton",
+                   command=self.restore_original).pack(side="left", padx=(0, 12))
+        ttk.Button(row, text=_("Restaurar seleccionada"), command=self.restore_selected).pack(side="left")
         ttk.Button(row, text=_("Crear copia ahora"), command=self.backup_now).pack(side="left", padx=6)
         ttk.Button(row, text=_("Abrir carpeta"), command=self.open_backups).pack(side="left")
 
@@ -663,6 +676,10 @@ class App(tk.Tk):
             self.ui(self._refresh_hw)
             return
         self.cfg = cfg
+        try:
+            applier.ensure_original(cfg.directory)  # snapshot of untouched settings, once
+        except Exception:
+            pass
         self.ui(self._refresh_all)
 
     def _refresh_all(self):
@@ -740,7 +757,7 @@ class App(tk.Tk):
             drift.accept_current(self.out_dir, self.cfg.directory)
             w.destroy()
             self._drift_check()
-        ttk.Button(row, text=_("Volver a aplicar los míos"), style="Accent.TButton", command=reapply).pack(side="left")
+        self._lockable(ttk.Button(row, text=_("Volver a aplicar los míos"), style="Accent.TButton", command=reapply)).pack(side="left")
         ttk.Button(row, text=_("Quedarme con los actuales"), command=accept).pack(side="left", padx=6)
         ttk.Button(row, text=_("Ahora no"), command=w.destroy).pack(side="right")
 
@@ -1158,7 +1175,7 @@ class App(tk.Tk):
         for rec in r.recs:
             if rec.get("key"):
                 t.add([f"P{rec['priority']}", CAT.get(rec["category"], rec["category"]), rec["key"], rec["current"], rec["proposed"], rec["reason"]],
-                      data=rec, checked=rec["priority"] == 1, tags=(PRIO_TAG[rec["priority"]],))
+                      data=rec, checked=False, tags=(PRIO_TAG[rec["priority"]],))
             else:
                 t.add([f"P{rec['priority']}", CAT.get(rec["category"], rec["category"]), rec["title"], "", "", rec["reason"]],
                       checkable=False, tags=("info",))
@@ -1207,7 +1224,19 @@ class App(tk.Tk):
             webbrowser.open(self.result.html_path.resolve().as_uri())
 
     # ------------------------------------------------------------------ aplicar
+    def _lockable(self, btn):
+        """Greys out a button that would write untested ini changes while writes are locked."""
+        if applier.WRITES_LOCKED:
+            btn.state(["disabled"])
+        return btn
+
+    def _lock_label(self, master):
+        return ttk.Label(master, text=(LOCK_NOTE if applier.WRITES_LOCKED else ""), style="Muted.TLabel")
+
     def _confirm_apply(self, changes, what) -> bool:
+        if applier.WRITES_LOCKED:
+            messagebox.showinfo(APP, applier.LOCKED_MESSAGE)
+            return False
         if not changes:
             messagebox.showinfo(APP, _("No hay cambios que aplicar."))
             return False
@@ -1280,8 +1309,9 @@ class App(tk.Tk):
             self.mp_diff.heading(c, text=t)
             self.mp_diff.column(c, width=w, anchor="w")
         self.mp_diff.pack(fill="both", expand=True)
-        ttk.Button(right, text=_("Aplicar perfil seleccionado (con copia de seguridad)"), style="Accent.TButton",
-                   command=self.myprof_apply).pack(fill="x", pady=(6, 0))
+        self._lockable(ttk.Button(right, text=_("Aplicar perfil seleccionado (con copia de seguridad)"), style="Accent.TButton",
+                                  command=self.myprof_apply)).pack(fill="x", pady=(6, 0))
+        self._lock_label(right).pack(anchor="w")
         body.add(right, weight=2)
         self._mp_items: dict[str, dict] = {}
 
@@ -1479,7 +1509,8 @@ class App(tk.Tk):
         btns.pack(fill="x", pady=8)
         ttk.Button(btns, text=_("Leer de iRacing"), command=self._fov_load_from_ini).pack(side="left")
         ttk.Button(btns, text=_("Usar ángulo ideal"), command=self._fov_ideal).pack(side="left", padx=6)
-        ttk.Button(btns, text=_("Aplicar a iRacing"), style="Accent.TButton", command=self._fov_apply).pack(side="right")
+        self._lockable(ttk.Button(btns, text=_("Aplicar a iRacing"), style="Accent.TButton", command=self._fov_apply)).pack(side="right")
+        self._lock_label(btns).pack(side="right", padx=8)
 
         self.fv_canvas = tk.Canvas(right, background="#11151d", highlightthickness=0)
         self.fv_canvas.pack(fill="both", expand=True)
@@ -1640,9 +1671,28 @@ class App(tk.Tk):
         if not messagebox.askyesno(APP, _("Restaurar la copia {stamp}?\nSe sobrescribirán los .ini actuales (antes se guarda una copia del estado actual).", stamp=stamp)):
             return
         try:
-            applier.backup(self.cfg.directory, "antes_de_restaurar")
+            applier.backup(self.cfg.directory, "before_restore")
             log = applier.restore(self.cfg.directory, stamp)
             drift.clear(self.out_dir)  # la referencia anterior ya no aplica
+        except Exception as e:
+            messagebox.showerror(APP, str(e))
+            return
+        messagebox.showinfo(APP, "\n".join(log))
+        self._bg(self._load_cfg, _("Recargando…"))
+
+    def restore_original(self):
+        if not self.cfg:
+            return
+        src = applier.original_backup(self.cfg.directory)
+        if not src:
+            messagebox.showinfo(APP, "There is no backup yet, so there is nothing to restore.")
+            return
+        if not messagebox.askyesno(APP, f"Put back your original iRacing settings from {src.name}?\n\n"
+                                        "Your current settings are saved first, so this can be undone too."):
+            return
+        try:
+            log = applier.restore_original(self.cfg.directory)
+            drift.clear(self.out_dir)
         except Exception as e:
             messagebox.showerror(APP, str(e))
             return

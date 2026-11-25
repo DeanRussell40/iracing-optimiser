@@ -14,7 +14,7 @@ import re
 import time
 import urllib.request
 
-REPO = "empg80/iRacing-Optimizer"
+REPO = "DeanRussell40/iracing-optimiser"  # this fork, not upstream: upstream builds have no replay bench
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 _PAGE_PREFIX = f"https://github.com/{REPO}/releases/".lower()

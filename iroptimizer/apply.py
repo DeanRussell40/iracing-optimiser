@@ -14,6 +14,20 @@ from .iniio import IniFile
 from .safety import UnsafeInput, WRITABLE_FILES, safe_ini_target, safe_renderer, safe_stamp
 
 BACKUP_DIR = "iroptimizer_backups"
+ORIGINAL_LABEL = "original"
+
+# Locked until a setting can be proven by an A/B test on the replay bench. The recommendations, profiles,
+# FOV and drift re-apply all come from fixed rules of thumb, not from measurements on this PC, so the app
+# must not write them. Restoring a backup is still allowed: that only ever puts back the user's own files.
+WRITES_LOCKED = True
+LOCKED_MESSAGE = ("Changing iRacing settings is switched off in this version.\n\n"
+                  "These suggestions come from fixed rules of thumb, not from tests on your PC. The app will only "
+                  "change a setting once it can prove the change helps with an A/B test on the Replay bench "
+                  "(next milestone).\n\nRestoring a backup still works.")
+
+
+class ChangesLocked(RuntimeError):
+    """Writing untested ini changes is switched off (see WRITES_LOCKED)."""
 BACKUP_FILES = ("rendererDX11Monitor.ini", "rendererDX11OpenXR.ini", "rendererDX11OpenVR.ini",
                 "rendererDX11Oculus.ini", "rendererDX11.ini", "app.ini", "core.ini")
 
@@ -44,6 +58,8 @@ def apply_changes(changes: list[dict], ini_dir: Path, renderer_file: str | None,
     """changes: [{file: 'renderer'|'app', key, proposed, section?}]. Solo toca claves existentes."""
     if not changes:
         return [_("No hay cambios que aplicar.")]
+    if not dry_run and WRITES_LOCKED:
+        raise ChangesLocked(LOCKED_MESSAGE)
     if not dry_run and iracing_running():
         raise RuntimeError(_("Cierra iRacing antes de aplicar: el simulador reescribe los .ini al salir."))
     files = {"renderer": safe_renderer(renderer_file), "app": "app.ini"}
@@ -98,6 +114,35 @@ def list_backups(ini_dir: Path) -> list[Path]:
     return sorted((d for d in root.iterdir() if d.is_dir()), reverse=True) if root.is_dir() else []
 
 
+def original_backup(ini_dir: Path) -> Path | None:
+    """The oldest backup: the user's settings before this app (or its upstream version) first changed anything."""
+    dirs = list_backups(ini_dir)
+    marked = [d for d in dirs if d.name.endswith("_" + ORIGINAL_LABEL)]
+    return (marked or dirs)[-1] if dirs else None
+
+
+def ensure_original(ini_dir: Path) -> Path | None:
+    """Takes a one-off snapshot of the user's untouched settings the first time the app sees the folder.
+    Does nothing when any backup already exists (the oldest one is then the original)."""
+    ini_dir = Path(ini_dir)
+    if not ini_dir.is_dir() or list_backups(ini_dir):
+        return None
+    if not any((ini_dir / n).is_file() for n in BACKUP_FILES):
+        return None
+    return backup(ini_dir, ORIGINAL_LABEL)
+
+
+def restore_original(ini_dir: Path) -> list[str]:
+    """One-click undo of everything: puts back the oldest backup (saving the current state first)."""
+    src = original_backup(ini_dir)
+    if not src:
+        raise FileNotFoundError("There is no original backup yet.")
+    if iracing_running():
+        raise RuntimeError("Close iRacing before restoring.")
+    backup(ini_dir, "before_restore")
+    return restore(ini_dir, src.name)
+
+
 def restore(ini_dir: Path, stamp: str | None = None) -> list[str]:
     dirs = list_backups(ini_dir)
     if not dirs:
@@ -112,5 +157,5 @@ def restore(ini_dir: Path, stamp: str | None = None) -> list[str]:
         if f.name not in WRITABLE_FILES or not f.is_file() or f.is_symlink():
             continue  # solo restauramos .ini conocidos de iRacing
         shutil.copy2(f, safe_ini_target(ini_dir, f.name))
-        out.append(f"Restaurado {f.name} desde {src.name}")
+        out.append(f"Restored {f.name} from {src.name}")
     return out

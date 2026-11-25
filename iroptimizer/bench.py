@@ -372,12 +372,12 @@ RUN_COLS = (("avg_fps", "Avg FPS", 0), ("frametime_p50_ms", "Median ms", 2), ("f
             ("low1_fps", "1% low", 0), ("pacing_error_ms", "Pacing err ms", 2), ("stutters", "Stutters", 0),
             ("display_p99_ms", "Display p99 ms", 2), ("not_displayed_pct", "Not shown %", 1),
             ("display_latency_p50_ms", "Latency p50 ms", 1), ("gpu_bound_pct", "GPU-bound %", 0),
-            ("gpu_temp_c", "GPU °C", 0), ("gpu_clock_mhz", "GPU MHz", 0))
+            ("gpu_temp_c", "GPU °C", 0), ("gpu_clock_mhz", "GPU MHz", 0), ("cap_fps", "Capped at FPS", 0))
 
 
 def render_report(s: dict) -> str:
     rep, pm = s["repeatability"], s["present_mode"]
-    colour = {"pass": "#1e8449", "fail": "#c0392b"}.get(rep.get("verdict"), "#b9770e")
+    colour = {"pass": "#1e8449", "fail": "#c0392b", "capped": "#c0392b"}.get(rep.get("verdict"), "#b9770e")
     rows = []
     for r in s["runs"]:
         w, m = r["window"], r["metrics"]
