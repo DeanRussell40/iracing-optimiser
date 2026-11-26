@@ -83,6 +83,11 @@ class Api:
         self._update: dict = {"available": False, "state": "checking"}
         self._updater = updater
         try:
+            from . import presentmon
+            presentmon.ensure_cached()  # a copy outside the temp folder, in case that folder disappears
+        except Exception:
+            pass
+        try:
             from . import winsys
             self._resumed = winsys.resume_leftovers(self._out_dir)
         except Exception:
@@ -235,7 +240,8 @@ class Api:
             from . import presentmon
             exe = self._presentmon_exe() if self._presentmon_exe else presentmon.find_exe([self._out_dir / "tools"])
             if not exe:
-                return {"ok": False, "error": "PresentMon was not found. The tests need it to measure frames."}
+                return {"ok": False, "error": "PresentMon, which measures the frames, is missing from this copy of "
+                        "the app. Close the app completely and open it again."}
 
         variants, title = None, "Measure my PC"
         job = Job(test, title, time.time(), 0)
@@ -414,7 +420,8 @@ class Api:
                 cmd = [sys.executable, "--classic"]
             else:
                 cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / "app.py"), "--classic"]
-            subprocess.Popen(cmd)  # noqa: S603  # nosec B603
+            from .winsys import child_env
+            subprocess.Popen(cmd, env=child_env())  # noqa: S603  # nosec B603
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}

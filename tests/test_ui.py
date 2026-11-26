@@ -320,3 +320,26 @@ def test_old_bundles_are_reanalysed(tmp_path):
     api2 = make_api(tmp_path)
     api2.view()
     assert "stutter_attribution" in json.loads((d / "summary.json").read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- relaunching a one-file exe
+
+def test_child_env_drops_pyinstaller_state():
+    from iroptimizer import winsys
+    env = winsys.child_env({"PATH": "x", "_MEIPASS2": "C:/t/_MEI1", "_PYI_APPLICATION_HOME_DIR": "C:/t/_MEI1",
+                            "_PYI_PARENT_PROCESS_LEVEL": "1"})
+    assert env == {"PATH": "x", "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def test_presentmon_cached_outside_temp(tmp_path, monkeypatch):
+    from iroptimizer import presentmon
+    bundled = tmp_path / "_MEI1" / "tools"
+    bundled.mkdir(parents=True)
+    (bundled / "PresentMon.exe").write_bytes(b"pm" * 100)
+    monkeypatch.setattr(presentmon, "_bundled_dirs", lambda: [bundled])
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    dst = presentmon.ensure_cached()
+    assert dst.read_bytes() == b"pm" * 100
+    import shutil
+    shutil.rmtree(tmp_path / "_MEI1")  # the parent copy exits and its temp folder goes
+    assert presentmon.find_exe() == dst
