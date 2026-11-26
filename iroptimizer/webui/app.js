@@ -36,11 +36,28 @@ function dialog({title, html, ok = "OK", cancel = "Cancel", prompt = false}) {
 }
 function show(name) {
   screen = name;
-  for (const s of ["tune", "results", "backups"]) {
+  for (const s of ["tune", "audit", "results", "backups"]) {
     $(s).hidden = s !== name;
     document.querySelector(`.nav[data-screen=${s}]`).setAttribute("aria-current", s === name);
   }
   if (name === "results") drawChart();
+  if (name === "audit" && !loadAudit.done) loadAudit();
+}
+async function loadAudit() {
+  loadAudit.done = true;
+  $("au-rows").innerHTML = `<tr><td colspan="5" class="empty">Reading your settings…</td></tr>`;
+  const r = await call("audit");
+  if (!r.ok) { $("au-rows").innerHTML = `<tr><td colspan="5" class="empty">${esc(r.error)}</td></tr>`; return; }
+  const LV = {ok: ["good", "Fine"], info: ["info", "Info"], test: ["info", "Test"], warn: ["warn", "Check"], bad: ["bad", "Fix"]};
+  let area = "";
+  $("au-rows").innerHTML = r.items.map(i => {
+    const head = i.area !== area ? `<tr class="group"><th colspan="5">${esc(area = i.area)}</th></tr>` : "";
+    const [cls, word] = LV[i.level] || LV.info;
+    const btn = i.test ? `<button class="ghost" data-action="test:guided:${esc(i.test.a)}:${esc(i.test.b)}">Test this</button>` : "";
+    return head + `<tr><td>${esc(i.name)}</td><td>${esc(i.value)}</td><td><span class="tag ${cls}">${word}</span></td><td class="why">${esc(i.note)}</td><td class="n">${btn}</td></tr>`;
+  }).join("");
+  const c = r.counts;
+  $("au-sub").textContent = `${c.bad} to fix, ${c.warn} to check, ${c.test} that only a test can settle. Nothing is changed.`;
 }
 const mins = s => s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`;
 
@@ -263,6 +280,7 @@ function wire() {
     if (!r.ok) toast(r.error || "Couldn't open the classic window.");
   });
   $("open-folder").addEventListener("click", () => call("open_results_folder"));
+  $("au-refresh").addEventListener("click", loadAudit);
   $("bk-now").addEventListener("click", async () => {
     const r = await call("backup_now");
     r.ok ? (toast("Backup saved.", true), refresh()) : toast(r.error || "Backup failed.");
@@ -274,6 +292,7 @@ function wire() {
       if (id === "relaunch_admin") relaunch();
       else if (id.startsWith("test:")) {
         const [, test, A, B] = id.split(":");
+        if (screen !== "tune") show("tune");
         startTest(test, test === "guided" ? {a: A, b: B} : {});
       }
     } else if (rep) {
@@ -302,7 +321,7 @@ async function boot() {
   await refresh();
   watchUpdate();
   const m = location.hash.slice(1);
-  if (["tune", "results", "backups"].includes(m)) show(m);
+  if (["tune", "audit", "results", "backups"].includes(m)) show(m);
 }
 boot();
 })();
