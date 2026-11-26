@@ -409,6 +409,22 @@ def _gpu_in(samples: list[dict], t0: float, t1: float) -> dict:
             "gpu_util_pct": avg("util_pct")}
 
 
+def _settings_key(fp: dict) -> str | None:
+    from . import config_reader
+    try:
+        return config_reader.settings_key(fp.get("config") or {})
+    except Exception:
+        return None
+
+
+def _replay_mismatch(fp: dict) -> list[dict]:
+    from . import config_reader
+    try:
+        return config_reader.replay_mismatch(fp.get("config") or {})
+    except Exception:
+        return []
+
+
 def analyze_bundle(bdir: Path) -> dict:
     """(Re)analyses a bench bundle. Writes summary.json and report.html and returns the summary."""
     from . import abtest, stutters, winsys
@@ -470,6 +486,8 @@ def analyze_bundle(bdir: Path) -> dict:
         "present_mode": metrics.present_mode_summary(base_frames),
         "columns": info.get("columns"),
         "surface": surf,
+        "settings_key": _settings_key(fp),
+        "replay_mismatch": _replay_mismatch(fp),
         "display": fp.get("hardware", {}).get("display"),
         "gpus": fp.get("hardware", {}).get("gpus"),
     }

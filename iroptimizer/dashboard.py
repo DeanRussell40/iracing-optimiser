@@ -53,6 +53,8 @@ def load_bundle(bdir: Path) -> dict | None:
         "caps": s.get("caps") or {},
         "suspects": s.get("suspects") or [],
         "stutter_attribution": s.get("stutter_attribution") or {},
+        "settings_key": s.get("settings_key"),
+        "replay_mismatch": s.get("replay_mismatch") or [],
         "background": s.get("background") or [],
         "present_mode": s.get("present_mode") or {},
         "surface": s.get("surface") or {},
@@ -257,13 +259,14 @@ def summary(history: list[dict]) -> tuple[str, list[str]]:
 
 
 def chart(history: list[dict], limit: int = 12) -> list[dict]:
-    """1% low per measured setup, in the order they were measured."""
+    """1% low per measured setup, in the order they were measured. "stale" marks other graphics settings."""
     pts = []
     for b in history:
         for n in b["variants"]:
             v = b["per_variant"][n].get("low1_fps")
             if v is not None:
-                pts.append({"when": _when(b["created"]), "label": n, "value": round(v, 1), "id": b["id"]})
+                pts.append({"when": _when(b["created"]), "label": n, "value": round(v, 1), "id": b["id"],
+                            "stale": bool(b.get("stale"))})
     return pts[-limit:]
 
 
@@ -277,7 +280,8 @@ def tests_table(history: list[dict]) -> list[dict]:
             rows.append({"when": _when(b["created"]), "test": "Repeatability check", "low1": _fmt(m.get("low1_fps")),
                          "p99": _fmt(m.get("frametime_p99_ms"), 1, " ms"),
                          "verdict": {"pass": "Repeatable", "fail": "Too noisy", "capped": "Capped"}.get(v, v.title()),
-                         "level": {"pass": "good", "fail": "warn", "capped": "warn"}.get(v, "info"), "id": b["id"]})
+                         "level": {"pass": "good", "fail": "warn", "capped": "warn"}.get(v, "info"), "id": b["id"],
+                         "stale": bool(b.get("stale"))})
             continue
         for c in b["comparisons"]:
             mb = b["per_variant"].get(c["variant"], {})
@@ -287,7 +291,7 @@ def tests_table(history: list[dict]) -> list[dict]:
                          "p99": f"{_fmt(ma.get('frametime_p99_ms'), 1)} → {_fmt(mb.get('frametime_p99_ms'), 1)} ms",
                          "verdict": c["verdict"].title() if c["verdict"] != "same" else "No difference",
                          "level": {"better": "good", "worse": "bad", "mixed": "warn"}.get(c["verdict"], "info"),
-                         "id": b["id"]})
+                         "id": b["id"], "stale": bool(b.get("stale"))})
     return rows
 
 
@@ -324,10 +328,52 @@ def focus_text(focus: int, history: list[dict]) -> dict:
             "pick": "No graphics trade-offs have been measured yet, so every position keeps your current settings."}
 
 
-def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None, machine: str = "") -> dict:
+def _settings_findings(history: list[dict], current: list[dict], settings_problem: str | None,
+                       capture: dict | None) -> list[dict]:
+    out = []
+    def add(level, title, detail="", action=None):
+        out.append({"level": level, "title": title, "detail": detail, "action": action})
+    if settings_problem:
+        add("warn", "Replay and race graphics differ", settings_problem)
+    if history and not current:
+        add("warn", "Your graphics settings changed since the last test",
+            "Earlier results were measured on other settings, so they don't describe your PC as it is now. They "
+            "stay on the Results screen, marked as other settings. Measure again for a new baseline.",
+            {"id": "test:auto", "label": "Measure my PC"})
+    elif current and current[-1].get("replay_mismatch") and not settings_problem:
+        add("info", "The last test ran with replay graphics that differed from race graphics",
+            "Those numbers describe the replay settings at the time, not what you race with.")
+    capture = capture or {}
+    if capture.get("simhub") is True:
+        from .capture import SIMHUB_ON_TEXT
+        add("warn", "SimHub is capturing the screen", SIMHUB_ON_TEXT)
+    if capture.get("apps"):
+        add("warn", "Screen capture was running: " + ", ".join(capture["apps"]),
+            "Recording, streaming and ambient-lighting tools copy the screen many times a second and compete with "
+            "the sim for the graphics card. Close them, or test them with the background test.")
+    return out
+
+
+def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None, machine: str = "",
+         current_key: str | None = None, settings_problem: str | None = None, capture: dict | None = None) -> dict:
+    """current_key: fingerprint of the graphics settings on disk now. Only tests measured on those settings feed the
+    readouts, findings, summary and next step; the rest stay in the chart and table, marked stale."""
+    from .capture import capture_apps
     history = load_history(bench_root)
-    head, paras = summary(history)
-    last = history[-1] if history else None
+    for b in history:
+        b["stale"] = current_key is not None and b.get("settings_key") != current_key
+    current = [b for b in history if not b["stale"]]
+    capture = dict(capture or {})
+    if current:
+        last_b = current[-1]
+        names = [r.get("name", "") for r in last_b.get("background") or []] + list(last_b.get("suspects") or [])
+        capture["apps"] = capture_apps(names)
+    head, paras = summary(current)
+    if history and not current:
+        head = "Your graphics settings changed"
+        paras = ["Every earlier test ran on different graphics settings, so none of them describe your PC now. "
+                 "Measure again for a new baseline."]
+    last = current[-1] if current else None
     sub = ""
     if last:
         name, m = current_state(last)
@@ -336,16 +382,24 @@ def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None,
         spread = ((rep.get("metrics") or {}).get("frametime_p99_ms") or {}).get("spread_pct")
         if spread is not None and rep.get("verdict") == "pass":
             sub += f" · repeatable to {spread:.1f}%"
+    elif history:
+        sub = "No tests on your current graphics settings yet"
+    fs = findings(current, elevation_problem)
+    if history and not current:
+        fs = [f for f in fs if f["title"] != "Nothing measured yet"]
+    at = 1 if elevation_problem else 0  # right after the "can't control iRacing" problem, which blocks everything
+    fs[at:at] = _settings_findings(history, current, settings_problem, capture)
     return {
         "machine": machine,
         "subtitle": sub or "No measurements yet",
-        "readouts": readouts(history),
-        "findings": findings(history, elevation_problem),
-        "next": next_step(history),
+        "readouts": readouts(current),
+        "findings": fs,
+        "next": next_step(current),
         "headline": head,
         "summary": paras,
         "chart": chart(history),
         "tests": tests_table(history),
-        "focus": focus_text(focus, history),
-        "bundles": len(history),
+        "focus": focus_text(focus, current),
+        "bundles": len(current),
+        "stale_bundles": len(history) - len(current),
     }

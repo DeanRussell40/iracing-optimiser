@@ -80,6 +80,7 @@ details summary{cursor:pointer;color:var(--mute);font-size:14px;margin-bottom:8p
 .tag.good{color:var(--good)}.tag.warn{color:var(--warn)}.tag.bad{color:var(--bad)}.tag.info{color:var(--mute)}
 .mute{color:var(--mute)}
 svg .bar{fill:#4a515c}svg .bar.best{fill:var(--go)}svg .grid{stroke:var(--line)}svg text.val{fill:var(--ink);font-weight:600}
+svg .bar.stale{opacity:.35}tr.stale td{color:var(--mute)}
 .find p{margin:2px 0 0;color:var(--mute);font-size:14px;max-width:95ch}
 .find strong{font-weight:600}
 .sum{font-size:16px;line-height:1.6}

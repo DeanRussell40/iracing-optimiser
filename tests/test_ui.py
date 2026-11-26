@@ -123,6 +123,8 @@ class FakePauser:
 
 
 def make_api(tmp_path, **kw):
+    kw.setdefault("settings_snapshot", lambda: None)  # never read the real iRacing or SimHub files in tests
+    kw.setdefault("simhub_capture", lambda: None)
     return webapp.Api(tmp_path, capture_factory=FakeCapture, driver_factory=FakeDriver,
                       elevation=lambda: None, ini_dir=lambda: tmp_path / "ini",
                       bench_overrides={"settle_s": 0.02, "lead_trim_s": 0.05},
@@ -315,11 +317,59 @@ def test_old_bundles_are_reanalysed(tmp_path):
     j = wait_done(api)
     d = tmp_path / "bench" / j["result"]["id"]
     s = json.loads((d / "summary.json").read_text(encoding="utf-8"))
-    s.pop("stutter_attribution")
+    for k in ("stutter_attribution", "settings_key", "replay_mismatch"):
+        s.pop(k)
     (d / "summary.json").write_text(json.dumps(s), encoding="utf-8")  # as an older build wrote it
     api2 = make_api(tmp_path)
     api2.view()
     assert "stutter_attribution" in json.loads((d / "summary.json").read_text(encoding="utf-8"))
+
+
+def test_findings_follow_the_current_graphics_settings(tmp_path):
+    snap = {"renderer": {"Graphics Options": {"MaxCarsToDraw": "40"}, "Replay Graphics": {"MaxCarsToDraw": "40"}}}
+    api = make_api(tmp_path, settings_snapshot=lambda: snap)
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
+    j = wait_done(api)
+    s = json.loads((tmp_path / "bench" / j["result"]["id"] / "summary.json").read_text(encoding="utf-8"))
+    from iroptimizer import config_reader
+    s["settings_key"] = config_reader.settings_key(snap)  # the fake run has no ini; stamp it as measured on snap
+    (tmp_path / "bench" / j["result"]["id"] / "summary.json").write_text(json.dumps(s), encoding="utf-8")
+    v = api.view()
+    assert v["bundles"] == 1 and v["stale_bundles"] == 0 and not v["tests"][0]["stale"]
+    snap["renderer"]["Graphics Options"]["MaxCarsToDraw"] = "20"  # settings changed since the test
+    v = api.view()
+    assert v["bundles"] == 0 and v["stale_bundles"] == 1 and v["tests"][0]["stale"] and v["chart"][0]["stale"]
+    assert v["headline"] == "Your graphics settings changed" and v["next"]["test"] == "auto"
+    titles = [f["title"] for f in v["findings"]]
+    assert "Your graphics settings changed since the last test" in titles
+    assert "Replay and race graphics differ" in titles
+    assert all(r["value"] == "–" for r in v["readouts"])
+
+
+def test_start_refuses_when_replay_and_race_graphics_differ(tmp_path):
+    snap = {"renderer": {"Graphics Options": {"MaxCarsToDraw": "40", "SSAO": "1"},
+                         "Replay Graphics": {"MaxCarsToDraw": "20", "SSAO": "1", "ReplayRenderModes": "0"}}}
+    api = make_api(tmp_path, settings_snapshot=lambda: snap)
+    r = api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})
+    assert not r["ok"] and r["fix"] == "settings_mismatch" and "MaxCarsToDraw 40 in races, 20 in replays" in r["error"]
+    assert "SSAO" not in r["error"]
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0, "ignore_settings": True})["ok"]
+    wait_done(api)
+
+
+def test_simhub_capture_and_capture_apps(tmp_path):
+    from iroptimizer import capture
+    d = tmp_path / "SimHub" / "PluginsData" / "Common"
+    d.mkdir(parents=True)
+    assert capture.simhub_capture_on([tmp_path / "SimHub"]) is None
+    (d / "SimuLightSettings.json").write_text('\ufeff{"EnableCaptureEngine": true}', encoding="utf-8")
+    assert capture.simhub_capture_on([tmp_path / "SimHub"]) is True
+    (d / "SimuLightSettings.json").write_text('{"EnableCaptureEngine": false}', encoding="utf-8")
+    assert capture.simhub_capture_on([tmp_path / "SimHub"]) is False
+    assert capture.capture_apps(["OBS64.exe", "obs64.exe", "simhubwpf.exe", "Prismatik.exe"]) == \
+        ["OBS", "Prismatik (ambient lighting)"]
+    api = make_api(tmp_path, simhub_capture=lambda: True)
+    assert "SimHub is capturing the screen" in [f["title"] for f in api.view()["findings"]]
 
 
 # ---------------------------------------------------------------- relaunching a one-file exe

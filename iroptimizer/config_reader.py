@@ -100,3 +100,45 @@ def flat_from_snapshot(section_dict: dict) -> dict[str, str]:
         for k, v in sec.items():
             out.setdefault(k.lower(), v)
     return out
+
+
+def _replay_keys(section_dict: dict) -> dict:
+    return {f"{sec}/{k}": v for sec, kv in (section_dict or {}).items() for k, v in kv.items()
+            if "replay" in k.lower() or "replay" in sec.lower() or "spectat" in k.lower()}
+
+
+def settings_key(snap: dict) -> str | None:
+    """Short fingerprint of the graphics settings a test ran with: the renderer ini (minus window placement) plus
+    any replay-related keys in app.ini. Results with a different key were measured on different settings."""
+    import hashlib
+    import json as _json
+    rend = snap.get("renderer") or {}
+    if not rend:
+        return None
+    keep = {sec: kv for sec, kv in rend.items() if not any(w in sec.lower() for w in ("window", "position"))}
+    blob = _json.dumps({"renderer": keep, "replay": _replay_keys(snap.get("app") or {})}, sort_keys=True)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]  # nosec B324 (a fingerprint, not security)
+
+
+def replay_mismatch(snap: dict) -> list[dict]:
+    """Settings that differ between [Graphics Options] (racing) and [Replay Graphics] (what replays, and so every
+    test, run with). Only keys present in both are compared. iRacing writes the ini when the sim closes, so a
+    change made in the sim a moment ago may not be on disk yet."""
+    secs = {s.lower(): kv for s, kv in (snap.get("renderer") or {}).items()}
+    race, rep = secs.get("graphics options"), secs.get("replay graphics")
+    if not race or not rep:
+        return []
+    by_key = {k.lower(): v for k, v in race.items()}
+    return [{"key": k, "race": by_key[k.lower()].strip(), "replay": v.strip()}
+            for k, v in rep.items() if k.lower() in by_key and by_key[k.lower()].strip() != v.strip()]
+
+
+def mismatch_text(diffs: list[dict], limit: int = 6) -> str:
+    if not diffs:
+        return ""
+    shown = "; ".join(f"{d['key']} {d['race']} in races, {d['replay']} in replays" for d in diffs[:limit])
+    more = f" and {len(diffs) - limit} more" if len(diffs) > limit else ""
+    return (f"Your replay graphics differ from your race graphics: {shown}{more}. Tests run on a replay, so the "
+            "results would describe settings you don't race with. Make them the same in iRacing's graphics options. "
+            "iRacing saves them to its settings file when the sim closes, so if you already did, close the sim "
+            "once and reopen it.")
