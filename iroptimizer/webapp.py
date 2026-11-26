@@ -154,7 +154,8 @@ class Api:
             self._reanalyse_old()
             focus = int(self._settings().get("focus", 1))
             v = dashboard.view(self._bench_root, focus, self._elevation_problem(), self._machine_line())
-            v["version"] = __version__
+            from . import version_label
+            v["version"] = version_label()
             v["backups"] = self.backups()
             v["focus_labels"] = list(abtest.FOCUS_LABELS)
             v["job"] = self._job_state(0)

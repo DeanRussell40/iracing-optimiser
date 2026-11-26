@@ -81,7 +81,9 @@ jobs:
           Move-Item $exe.FullName tools\PresentMon.exe -Force
 
       - name: Información de versión del .exe
-        run: python packaging/make_version_info.py
+        run: |
+          python packaging/write_build_info.py
+          python packaging/make_version_info.py
 
       - name: Compilar ejecutable
         run: >

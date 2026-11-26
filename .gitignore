@@ -12,3 +12,4 @@ session_*.json
 *.recs.json
 demo_iracing_ini/
 tools/*.exe
+iroptimizer/_build.py
