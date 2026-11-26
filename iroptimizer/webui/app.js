@@ -43,21 +43,35 @@ function show(name) {
   if (name === "results") drawChart();
   if (name === "audit" && !loadAudit.done) loadAudit();
 }
+const AU = {data: null, area: "", show: "", closed: new Set()};
 async function loadAudit() {
   loadAudit.done = true;
   $("au-rows").innerHTML = `<tr><td colspan="5" class="empty">Reading your settings…</td></tr>`;
   const r = await call("audit");
   if (!r.ok) { $("au-rows").innerHTML = `<tr><td colspan="5" class="empty">${esc(r.error)}</td></tr>`; return; }
-  const LV = {ok: ["good", "Fine"], info: ["info", "Info"], test: ["info", "Test"], warn: ["warn", "Check"], bad: ["bad", "Fix"]};
-  let area = "";
-  $("au-rows").innerHTML = r.items.map(i => {
-    const head = i.area !== area ? `<tr class="group"><th colspan="5">${esc(area = i.area)}</th></tr>` : "";
-    const [cls, word] = LV[i.level] || LV.info;
-    const btn = i.test ? `<button class="ghost" data-action="test:guided:${esc(i.test.a)}:${esc(i.test.b)}">Test this</button>` : "";
-    return head + `<tr><td>${esc(i.name)}</td><td>${esc(i.value)}</td><td><span class="tag ${cls}">${word}</span></td><td class="why">${esc(i.note)}</td><td class="n">${btn}</td></tr>`;
-  }).join("");
+  AU.data = r;
   const c = r.counts;
-  $("au-sub").textContent = `${c.bad} to fix, ${c.warn} to check, ${c.test} that only a test can settle. Nothing is changed.`;
+  $("au-sub").textContent = `${c.attention} need attention, ${c.test} only a test can settle. Nothing is changed.`;
+  renderAudit();
+}
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+function renderAudit() {
+  const r = AU.data;
+  if (!r) return;
+  const LV = {ok: ["good", "Fine"], info: ["info", "Info"], test: ["info", "Test"], warn: ["warn", "Check"], bad: ["bad", "Fix"]};
+  const kind = i => ["bad", "warn"].includes(i.level) ? "attention" : i.level === "test" ? "test" : "fine";
+  const rows = r.items.filter(i => (!AU.area || i.area === AU.area) && (!AU.show || kind(i) === AU.show));
+  const areas = [...new Set(rows.map(i => i.area))];
+  $("au-rows").innerHTML = rows.length ? areas.map(a => {
+    const its = rows.filter(i => i.area === a), shut = AU.closed.has(a);
+    const att = its.filter(i => kind(i) === "attention" && !i.summary).length;
+    const head = `<tr class="group"><th colspan="5"><button class="fold" data-fold="${esc(a)}" aria-expanded="${!shut}">${shut ? "▸" : "▾"} ${esc(a)} <span class="mute">${plural(its.filter(i => !i.summary).length, "setting")}${att ? `, ${att} need attention` : ""}</span></button></th></tr>`;
+    return head + (shut ? "" : its.map(i => {
+      const [cls, word] = LV[i.level] || LV.info;
+      const btn = i.test ? `<button class="ghost" data-action="test:guided:${esc(i.test.a)}:${esc(i.test.b)}">Test this</button>` : "";
+      return `<tr${i.summary ? ' class="summary"' : ""}><td>${esc(i.name)}</td><td>${esc(i.value)}</td><td><span class="tag ${cls}">${word}</span></td><td class="why">${esc(i.note)}</td><td class="n">${btn}</td></tr>`;
+    }).join(""));
+  }).join("") : `<tr><td colspan="5" class="empty">Nothing matches these filters.</td></tr>`;
 }
 const mins = s => s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`;
 
@@ -281,6 +295,18 @@ function wire() {
   });
   $("open-folder").addEventListener("click", () => call("open_results_folder"));
   $("au-refresh").addEventListener("click", loadAudit);
+  document.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
+    const k = "area" in b.dataset ? "area" : "show";
+    AU[k] = b.dataset[k];
+    document.querySelectorAll(`.chip[data-${k}]`).forEach(x => x.setAttribute("aria-pressed", x === b));
+    renderAudit();
+  }));
+  $("au-rows").addEventListener("click", e => {
+    const f = e.target.closest("[data-fold]");
+    if (!f) return;
+    AU.closed.has(f.dataset.fold) ? AU.closed.delete(f.dataset.fold) : AU.closed.add(f.dataset.fold);
+    renderAudit();
+  });
   $("bk-now").addEventListener("click", async () => {
     const r = await call("backup_now");
     r.ok ? (toast("Backup saved.", true), refresh()) : toast(r.error || "Backup failed.");

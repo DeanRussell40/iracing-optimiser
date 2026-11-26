@@ -79,6 +79,12 @@
  <h1>Audit my PC</h1>
  <p class="sub" id="au-sub">Every Windows, NVIDIA and iRacing setting that can affect smoothness, as it is now. Nothing is changed.</p>
  <div class="card"><div class="head"><h2>Current settings</h2><button class="ghost" id="au-refresh">Read again</button></div>
+  <div class="chips" role="group" aria-label="Show">
+   <span class="chip-label">Area</span>
+   <button class="chip" data-area="" aria-pressed="true">All</button><button class="chip" data-area="Windows" aria-pressed="false">Windows</button><button class="chip" data-area="NVIDIA" aria-pressed="false">NVIDIA</button><button class="chip" data-area="iRacing" aria-pressed="false">iRacing</button>
+   <span class="chip-label">Verdict</span>
+   <button class="chip" data-show="" aria-pressed="true">All</button><button class="chip" data-show="attention" aria-pressed="false">Needs attention</button><button class="chip" data-show="test" aria-pressed="false">Test</button><button class="chip" data-show="fine" aria-pressed="false">Fine or info</button>
+  </div>
   <div class="scroll"><table><thead><tr><th>Setting</th><th>Now</th><th>Verdict</th><th>Why</th><th></th></tr></thead><tbody id="au-rows"></tbody></table></div>
   <p class="note">"Test" means it depends on your PC, so only a measurement can say. "Test this" starts an A/B test: the replay pauses, you change that one setting, and the app measures both.</p>
  </div>

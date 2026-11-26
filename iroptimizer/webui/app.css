@@ -114,3 +114,7 @@ dialog.prompt h2{font-size:34px;color:var(--go)}
 @media(max-width:760px){.app{grid-template-columns:minmax(0,1fr)}.rail{position:static;height:auto;flex-direction:row;flex-wrap:wrap;padding:10px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:10px;width:100%}.rail .foot{display:none}.read{grid-template-columns:repeat(2,minmax(0,1fr))}.find li{grid-template-columns:12px minmax(0,1fr)}.find .ghost{grid-column:2;justify-self:start}}
 @media(prefers-reduced-motion:reduce){.run .bar i{transition:none}}
 tr.group th{text-align:left;padding-top:16px;color:var(--ink);font-size:13px}td.why{color:var(--mute);font-size:13px;max-width:420px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 10px}.chip-label{color:var(--mute);font-size:12px;margin:0 4px 0 10px}.chip-label:first-child{margin-left:0}
+.chip{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:20px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}.chip[aria-pressed=true]{border-color:var(--go);color:var(--go)}
+.fold{background:none;border:0;color:var(--ink);font:inherit;font-weight:600;cursor:pointer;padding:0}tr.summary td{font-weight:600}
+tr.summary td.why{font-weight:400}
