@@ -62,7 +62,7 @@ def history_dir(tmp_path: Path) -> Path:
 
 def test_empty_view_asks_for_first_measurement(tmp_path):
     v = dashboard.view(tmp_path / "bench")
-    assert v["next"]["test"] == "repeat" and v["chart"] == [] and v["tests"] == []
+    assert v["next"]["test"] == "auto" and v["chart"] == [] and v["tests"] == []
     assert v["readouts"][0]["value"] == "–"
     assert any(f["title"] == "Nothing measured yet" for f in v["findings"])
 
@@ -228,3 +228,82 @@ def test_webui_files_present_and_csp_strict():
     import re
     for name in set(re.findall(r'call\("(\w+)"', js)):
         assert callable(getattr(webapp.Api, name, None)), name
+
+
+def test_page_handles_every_next_step():
+    js = (webapp.WEBUI / "app.js").read_text(encoding="utf-8")
+    for t in ("auto", "background", "guided", "repeat"):
+        assert f'"{t}"' in js, t
+
+
+# ---------------------------------------------------------------- the app never blames or pauses itself
+
+def test_own_family_excluded_from_background(monkeypatch):
+    import subprocess, sys as _sys
+    from iroptimizer import winsys
+    child = subprocess.Popen([_sys.executable, "-c", "import time\nwhile True: pass"])  # a busy child, like WebView2
+    try:
+        smp = winsys.BackgroundSampler(interval_s=0.2)
+        smp.start()
+        time.sleep(1.2)
+        smp.stop()
+        import psutil
+        name = psutil.Process(child.pid).name()
+        seen = {n for x in smp.samples for n in x["procs"]}
+        assert name not in seen or all(x["procs"].get(name, 0) < 0.5 for x in smp.samples)
+        assert child.pid in winsys.own_family()
+    finally:
+        child.kill()
+    assert winsys.is_protected("iRacingOptimizer (1).exe")
+
+
+# ---------------------------------------------------------------- self-update
+
+def test_parse_sums():
+    from iroptimizer import selfupdate
+    h = "a" * 64
+    assert selfupdate.parse_sums(f"{h}  iRacingOptimizer.exe\r\n") == h
+    assert selfupdate.parse_sums("garbage") is None
+
+
+def test_check_and_install_swap(tmp_path):
+    from iroptimizer import selfupdate
+    exe = tmp_path / "iRacingOptimizer (1).exe"
+    exe.write_bytes(b"old build")
+    (tmp_path / "iRacingOptimizer.exe").write_bytes(b"older copy")
+    new = b"new build"
+    import hashlib
+    want = hashlib.sha256(new).hexdigest()
+    assert selfupdate.check(exe=exe, fetch=lambda: want)["available"]
+    assert not selfupdate.check(exe=exe, fetch=lambda: hashlib.sha256(b"old build").hexdigest())["available"]
+    assert not selfupdate.check(exe=exe, fetch=lambda: (_ for _ in ()).throw(OSError("offline")))["available"]
+    launched = []
+    target = selfupdate.install(want, exe=exe, download=lambda p: p.write_bytes(new), launch=launched.append)
+    assert target.name == "iRacingOptimizer.exe" and target.read_bytes() == new and launched == [target]
+    assert not exe.exists() and (tmp_path / selfupdate.OLD_NAME).read_bytes() == b"old build"
+    selfupdate.cleanup(target)
+    assert not (tmp_path / selfupdate.OLD_NAME).exists()
+
+
+def test_install_refuses_bad_download(tmp_path):
+    from iroptimizer import selfupdate
+    exe = tmp_path / "iRacingOptimizer.exe"
+    exe.write_bytes(b"old build")
+    with pytest.raises(RuntimeError, match="checksum"):
+        selfupdate.install("b" * 64, exe=exe, download=lambda p: p.write_bytes(b"tampered"), launch=lambda p: None)
+    assert exe.read_bytes() == b"old build" and not (tmp_path / selfupdate.PART_NAME).exists()
+
+
+def test_api_update_flow(tmp_path):
+    class Up:
+        installed = []
+        def cleanup(self): pass
+        def check(self): return {"available": True, "sha": "c" * 64}
+        def install(self, sha, progress=None): self.installed.append(sha)
+    up = Up()
+    api = make_api(tmp_path, updater=up)
+    assert api.update_status()["state"] == "checking"
+    api._check_update()
+    assert api.update_status()["available"]
+    assert api.update_install()["ok"] and up.installed == ["c" * 64]
+    assert not api.update_install()["ok"]  # not twice

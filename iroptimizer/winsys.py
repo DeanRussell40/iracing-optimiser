@@ -30,7 +30,20 @@ PROTECTED = {
     "msmpeng.exe", "searchindexer.exe", "taskmgr.exe", "iracingservice.exe", "iracingservice64.exe",
     "iracingui.exe", "iracingoptimizer.exe", "python.exe", "claude.exe",
 }
-PROTECTED_PREFIXES = (IRACING_PREFIX, "presentmon", "nvidia", "eos", "easyanticheat")
+# "iracingoptimizer" as a prefix: a re-downloaded exe runs as "iRacingOptimizer (1).exe"
+PROTECTED_PREFIXES = (IRACING_PREFIX, "presentmon", "nvidia", "eos", "easyanticheat", "iracingoptimizer")
+
+
+def own_family() -> set[int]:
+    """This app's pids: itself, what launched it (the one-file bootloader) and everything it started (WebView2,
+    PresentMon). Never blamed, never paused, whatever the exe is called."""
+    try:
+        me = psutil.Process()
+        pids = {me.pid, *(q.pid for q in me.parents())}
+        pids.update(c.pid for c in me.children(recursive=True))
+        return pids
+    except psutil.Error:
+        return {os.getpid()}
 
 
 def is_windows() -> bool:
@@ -229,10 +242,17 @@ class BackgroundSampler:
         self._stop = threading.Event()
         self._t: threading.Thread | None = None
         self._procs: dict[int, psutil.Process] = {}
+        self._mine: set[int] = set()
+        self._ticks = 0
 
     def _tick(self) -> dict[str, float]:
         seen: dict[str, float] = {}
+        if self._ticks % 10 == 0:  # children (WebView2, PresentMon) come and go; refreshing costs a process scan
+            self._mine = own_family()
+        self._ticks += 1
         for p in psutil.process_iter(["name"]):
+            if p.pid in self._mine:
+                continue
             if p.pid not in self._procs:
                 self._procs[p.pid] = p
                 try:
@@ -309,8 +329,7 @@ class ProcessPauser:
     def pause(self, names: list[str]) -> list[str]:
         """Returns the names actually paused (skips protected and inaccessible ones)."""
         want = {n.lower() for n in names if not is_protected(n)}
-        me = psutil.Process()
-        never = {me.pid, *(q.pid for q in me.parents())}  # never freeze this app or what launched it
+        never = own_family()  # never freeze this app, what launched it or its window
         done = []
         for p in psutil.process_iter(["name"]):
             n = (p.info["name"] or "")

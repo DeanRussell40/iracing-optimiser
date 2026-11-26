@@ -29,7 +29,7 @@ function dialog({title, html, ok = "OK", cancel = "Cancel", prompt = false}) {
     const done = v => { d.close(); $("dlg-ok").onclick = $("dlg-cancel").onclick = d.oncancel = null; res(v); };
     $("dlg-ok").onclick = () => done(true);
     $("dlg-cancel").onclick = () => done(false);
-    d.oncancel = e => { e.preventDefault(); if (cancel) done(false); };
+    d.oncancel = e => { e.preventDefault(); if (cancel) done(null); };  // Escape: neither button
     d.showModal();
     $("dlg-ok").focus();
   });
@@ -133,17 +133,24 @@ function lengths() {
 }
 async function startTest(test, extra = {}) {
   const opts = {...lengths(), ...extra};
-  if (test === "background") {
+  const auto = test === "auto";  // first run: test busy apps straight away if there are any, else measure
+  if (auto || test === "background") {
+    test = "background";
     const d = $("dlg");
     dialog({title: "Looking for busy apps", html: "<p>Measuring which apps use the processor. This takes 5 seconds…</p>", ok: "", cancel: ""});
-    const r = await call("scan_background");
+    const r = startTest.scan = await call("scan_background");
     d.close();
     if (!r.ok) { toast(r.error || "The scan failed."); return; }
-    if (!r.apps.length) { await dialog({title: "Nothing to test", html: "<p>No busy background apps were found, so pausing apps can't help.</p>", cancel: ""}); return; }
+    if (!r.apps.length && auto) test = "repeat";
+    else if (!r.apps.length) { await dialog({title: "Nothing to test", html: "<p>No busy background apps were found, so pausing apps can't help.</p>", cancel: ""}); return; }
+  }
+  if (test === "background") {
+    const r = startTest.scan;
     const go = await dialog({title: "Pause these apps for half the runs?",
       html: "<ul>" + r.apps.map(a => `<li><label><input type="checkbox" checked value="${esc(a.name)}"> ${esc(a.name)} <span class="mute">(${a.cores} cores)</span></label></li>`).join("") + "</ul>" +
         "<p>While paused they stop responding, for example SimHub dashes and wheel LEDs. They are resumed straight after each run and at the end, even if the app crashes.</p>",
-      ok: "Start the test"});
+      ok: "Start the test", cancel: auto ? "Just measure" : "Cancel"});
+    if (go === false && auto) return startTest("repeat", extra);
     if (!go) return;
     opts.names = [...$("dlg-body").querySelectorAll("input:checked")].map(i => i.value);
     if (!opts.names.length) { toast("No apps chosen."); return; }
@@ -180,7 +187,7 @@ function showJob(j, fromView = false) {
     ul.scrollTop = ul.scrollHeight;
   }
   if (j.next !== undefined) logNext = j.next;
-  if (running && !pollTimer) pollTimer = setTimeout(poll, 700);
+  if (running && !pollTimer) pollTimer = setTimeout(poll, pollEvery());
 }
 async function poll() {
   pollTimer = null;
@@ -194,11 +201,30 @@ async function poll() {
       .then(ok => ok ? call("answer", j.prompt.id) : call("stop"));
   }
   if (!j.prompt && lastPrompt && $("dlg").open && $("dlg").classList.contains("prompt")) { $("dlg").close(); lastPrompt = null; }
-  if (j.state === "running") { pollTimer = setTimeout(poll, 700); return; }
+  if (j.state === "running") { pollTimer = setTimeout(poll, pollEvery()); return; }
   if (j.state === "done" && j.result) {
     refresh().then(() => toast((j.result.lines || []).join(" ") || "Test finished.", true));
   }
 }
+// The app must not cost the sim CPU while it measures: slow polling, slower still when hidden behind iRacing.
+const pollEvery = () => document.hidden ? 5000 : 2000;
+
+// ------------------------------------------------------------------ updates
+async function watchUpdate(tries = 0) {
+  const u = await call("update_status");
+  if (u.state === "checking" && tries < 20) { setTimeout(() => watchUpdate(tries + 1), 3000); return; }
+  $("update").hidden = !u.available;
+}
+async function installUpdate() {
+  const ok = await dialog({title: "Install the newest build?",
+    html: "<p>Downloads it from this app's GitHub page, checks it against the published checksum, replaces this exe and restarts. Your results and backups are kept.</p>",
+    ok: "Update and restart"});
+  if (!ok) return;
+  $("update").innerHTML = "<p>Downloading the newest build…</p>";
+  const r = await call("update_install");
+  if (!r.ok) { toast(r.error || "Update failed."); watchUpdate(); }
+}
+
 async function relaunch() {
   const r = await call("relaunch_admin");
   if (!r.ok) toast(r.error || "Couldn't restart as administrator.");
@@ -222,6 +248,7 @@ function wire() {
   $("go-chosen").addEventListener("click", () => startTest(chosenTest()));
   $("run-stop").addEventListener("click", () => call("stop"));
   $("run-close").addEventListener("click", () => { $("run-card").hidden = true; $("start-card").hidden = false; });
+  $("update-go").addEventListener("click", installUpdate);
   $("classic").addEventListener("click", async () => {
     const r = await call("open_classic");
     if (!r.ok) toast(r.error || "Couldn't open the classic window.");
@@ -264,6 +291,7 @@ async function boot() {
     api = window.pywebview.api;
   }
   await refresh();
+  watchUpdate();
   const m = location.hash.slice(1);
   if (["tune", "results", "backups"].includes(m)) show(m);
 }

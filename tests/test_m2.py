@@ -109,7 +109,10 @@ def test_pauser_suspends_and_resumes(tmp_path):
     import shutil
     exe = tmp_path / "bgapp_m2test"
     shutil.copy(shutil.which("sleep"), exe)
-    child = subprocess.Popen([str(exe), "30"])
+    # started through a shell that exits, so the app isn't its parent (the app never pauses its own children)
+    out = subprocess.run(["sh", "-c", f'"{exe}" 30 >/dev/null 2>&1 & echo $!'], capture_output=True, text=True)
+    child = psutil.Process(int(out.stdout.strip()))
+    time.sleep(0.2)
     try:
         name = psutil.Process(child.pid).name()
         pz = winsys.ProcessPauser(tmp_path)

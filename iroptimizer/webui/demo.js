@@ -162,7 +162,7 @@ window.DEMO_API = {
     return {job: j}; },
   answer: async () => { job.answered = true; return {ok: true}; },
   stop: async () => { job.state = "stopped"; return {ok: true}; },
-  open_classic: async () => ({ok: true}), open_report: async () => ({ok: true}), open_results_folder: async () => ({ok: true}),
+  update_status: async () => ({available: false, state: "current"}), update_install: async () => ({ok: false}), open_classic: async () => ({ok: true}), open_report: async () => ({ok: true}), open_results_folder: async () => ({ok: true}),
   relaunch_admin: async () => ({ok: true}), backup_now: async () => ({ok: true}), restore: async () => ({ok: true}),
 };
 })();
