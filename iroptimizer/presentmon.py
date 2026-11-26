@@ -114,18 +114,29 @@ def request_group_membership(remove: bool = False) -> bool:
 class Capture:
     """Proceso de PresentMon capturando iRacing a un CSV."""
 
-    def __init__(self, exe: Path, out_csv: Path):
+    def __init__(self, exe: Path, out_csv: Path, session_name: str | None = None):
         self.exe = Path(exe)
         self.out_csv = Path(out_csv)
         self.proc: subprocess.Popen | None = None
         self.error: str | None = None
         self.started_at: float | None = None
+        # A unique trace-session name per capture: a session left behind by a crashed or elevated run can't
+        # block the next one (Windows error 4201 on the first real bench).
+        self.session = session_name or f"{SESSION}_{os.getpid()}_{int(time.time())}"
+
+    def _terminate(self, name: str) -> None:
+        try:
+            subprocess.run([str(self.exe), "--terminate_existing_session", "--session_name", name],
+                           capture_output=True, timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
 
     def start(self, wait_s: float = 2.5) -> bool:
+        self._terminate(SESSION)  # clear a stale session from older versions, which all used the fixed name
         args = [str(self.exe)]
         for n in PROCESS_NAMES:
             args += ["--process_name", n]
-        args += ["--output_file", str(self.out_csv), "--session_name", SESSION, "--stop_existing_session",
+        args += ["--output_file", str(self.out_csv), "--session_name", self.session, "--stop_existing_session",
                  "--no_console_stats", "--date_time", "--terminate_on_proc_exit"]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -135,7 +146,14 @@ class Capture:
         while time.time() < t_end:
             if self.proc.poll() is not None:
                 out = (self.proc.stdout.read() if self.proc.stdout else "") or ""
-                self.error = "permiso" if "access denied" in out.lower() or "denied" in out.lower() else out.strip()[-300:]
+                low = out.lower()
+                if "4201" in low or "already exists" in low:
+                    self.error = ("a PresentMon trace session from an earlier run is still active. Restart the PC, "
+                                  "or run 'logman stop iRacingOptimizer -ets' in an administrator Command Prompt")
+                elif "denied" in low:
+                    self.error = "permiso"
+                else:
+                    self.error = out.strip()[-300:]
                 return False
             time.sleep(0.2)
         return True
@@ -148,11 +166,7 @@ class Capture:
             return
         if self.proc.poll() is None:
             # Parar la sesión ETW hace que PresentMon termine limpio y vuelque el CSV
-            try:
-                subprocess.run([str(self.exe), "--terminate_existing_session", "--session_name", SESSION],
-                               capture_output=True, timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            except Exception:
-                pass
+            self._terminate(self.session)
             try:
                 self.proc.wait(timeout=timeout_s)
             except subprocess.TimeoutExpired:

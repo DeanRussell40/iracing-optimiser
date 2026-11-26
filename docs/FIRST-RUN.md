@@ -16,8 +16,8 @@ One page. About 20 minutes, most of it the PC running a replay on its own.
 
 ## 1. Get the app
 
-1. On GitHub, open this repository's **Actions** tab, then the newest green **Build Windows** run.
-2. Under **Artifacts**, download **iRacingOptimizer-windows**. Unzip it and run `iRacingOptimizer.exe`.
+1. Download the newest build: **[iRacingOptimizer.exe](https://github.com/DeanRussell40/iracing-optimiser/releases/download/latest/iRacingOptimizer.exe)**.
+2. Run `iRacingOptimizer.exe`.
 3. If Windows SmartScreen warns you, click **More info → Run anyway**. The exe isn't code-signed.
 4. It asks whether to notify you of new versions. Either answer is safe: it only checks this repository.
 
@@ -74,7 +74,7 @@ Set the NVIDIA app **Max Frame Rate** back to your usual value.
 | "PresentMon could not start" / permission | Do step 2 again, and make sure you signed out and back in. |
 | "iRacing is not showing a replay" | Open the replay in iRacing first, then click Start bench. |
 | "The replay did not move to frame …" | iRacing was loading. Wait until the replay shows, then start again. |
-| "PresentMon was not found" | Use the exe from the Actions artifact. A copy built another way may not include PresentMon. |
+| "PresentMon was not found" | Use the exe from the download link above. A copy built another way may not include PresentMon. |
 
 ## Undo everything
 

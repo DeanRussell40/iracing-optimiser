@@ -24,11 +24,9 @@ Next milestones: interleaved A/B tests for single settings (this is what unlocks
 
 ## Getting the app
 
-You don't need Python. GitHub builds the Windows app on every change:
+You don't need Python. GitHub builds the Windows app every time `main` changes, and this link always gives the newest build:
 
-1. Open the **Actions** tab of this repository.
-2. Click the newest green **Build Windows** run.
-3. Under **Artifacts**, download **iRacingOptimizer-windows**, unzip it and run `iRacingOptimizer.exe`.
+**[Download iRacingOptimizer.exe](https://github.com/DeanRussell40/iracing-optimiser/releases/download/latest/iRacingOptimizer.exe)**
 
 Windows SmartScreen may warn because the exe isn't code-signed: click *More info → Run anyway*.
 

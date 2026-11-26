@@ -15,6 +15,11 @@ from iroptimizer import bench, frames as framelib, metrics
 
 FIX = Path(__file__).parent / "fixtures" / "real"
 
+
+@pytest.fixture(autouse=True)
+def _short_runs(monkeypatch):
+    monkeypatch.setattr(bench, "MIN_SECONDS", 0.1)
+
 V2_HEADER = ["Application", "ProcessID", "SwapChainAddress", "PresentRuntime", "SyncInterval", "PresentFlags",
              "AllowsTearing", "PresentMode", "CPUStartDateTime", "MsBetweenPresents", "MsBetweenDisplayChange",
              "MsInPresentAPI", "MsUntilDisplayed", "MsCPUBusy", "MsGPUBusy", "MsDisplayLatency"]

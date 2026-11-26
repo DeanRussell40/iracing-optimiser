@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iRacing Optimiser mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE work tool, a race engineer's screen: calm, dense, one action
+   IDEA the pit-wall timing monitor: big readouts, verdicts in colour, nothing decorative
+   PICTURE live readouts of the PC (fps, 1% low, GPU limit) and the progress chart on Results
+   COLOUR graphite ground, white ink, one signal orange for the action, green/red only for verdicts
+   TYPE Barlow Semi Condensed for readouts and titles (timing-screen lettering) + Inter for text
+   LAYOUT slim left rail with 3 screens; Tune = readouts top, slider + start, findings list; stacks on phone */
+:root{color-scheme:dark;--bg:#111317;--rail:#0b0c0f;--panel:#191c21;--line:#2a2e35;--ink:#f2f3f5;--mute:#9aa1ac;--go:#ff5a1f;--good:#3ecf74;--bad:#ff4d4d;--warn:#f2b84b}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,sans-serif;overflow-x:clip}
+.app{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:100%}
+.rail{background:var(--rail);padding:20px 12px;display:flex;flex-direction:column;gap:4px;border-right:1px solid var(--line)}
+.brand{font:700 20px/1.1 "Barlow Semi Condensed",sans-serif;padding:4px 10px 20px}
+.brand span{color:var(--go)}
+.nav{all:unset;cursor:pointer;display:block;padding:11px 12px;border-radius:8px;color:var(--mute);font-weight:500;min-height:44px}
+.nav:hover{background:var(--panel);color:var(--ink)}
+.nav[aria-current=true]{background:var(--panel);color:var(--ink);box-shadow:inset 3px 0 0 var(--go)}
+.nav:focus-visible{outline:2px solid var(--go)}
+.rail .foot{margin-top:auto;color:var(--mute);font-size:13px;padding:10px}
+main{padding:28px clamp(16px,3vw,40px) 40px;max-width:1240px}
+h1{font:600 36px/1.05 "Barlow Semi Condensed",sans-serif;margin:0 0 4px;letter-spacing:-.01em}
+h2{font:600 22px/1.1 "Barlow Semi Condensed",sans-serif;margin:0 0 12px}
+.sub{color:var(--mute);margin:0 0 22px}
+.read{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:22px}
+.read div{background:var(--panel);padding:16px 18px}
+.read b{display:block;font:700 clamp(34px,4.4vw,52px)/1 "Barlow Semi Condensed",sans-serif;font-variant-numeric:tabular-nums}
+.read small{color:var(--mute);font-size:13px}
+.read em{font-style:normal;font-size:13px;color:var(--good);display:block;margin-top:4px}
+.tune{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;margin-bottom:26px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.ends{display:flex;justify-content:space-between;color:var(--mute);font-size:13px;margin-top:6px}
+input[type=range]{width:100%;appearance:none;height:44px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(90deg,#4b8cff,var(--go))}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;margin-top:-9px;border:3px solid var(--bg)}
+input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:linear-gradient(90deg,#4b8cff,var(--go))}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#fff;border:3px solid var(--bg)}
+input[type=range]:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+#pick{margin:12px 0 0;font-size:14px}
+#pick b{font-family:"Barlow Semi Condensed",sans-serif;font-size:18px}
+.lock{margin-top:12px;font-size:13px;color:var(--mute)}
+.start{display:flex;flex-direction:column;justify-content:space-between;gap:14px}
+.btn{all:unset;cursor:pointer;text-align:center;border-radius:10px;padding:16px 20px;font:700 22px/1 "Barlow Semi Condensed",sans-serif;background:var(--go);color:#160700;min-height:44px}
+.btn:hover{filter:brightness(1.08)}.btn:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.ghost{all:unset;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:9px 14px;font-weight:500;white-space:nowrap;min-height:24px}
+.ghost:hover{border-color:var(--mute)}.ghost:focus-visible{outline:2px solid var(--go)}
+.steps{margin:0;padding:0;list-style:none;color:var(--mute);font-size:14px}
+.steps li{padding:3px 0}
+.find{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.find li{display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:14px;align-items:center;padding:16px 4px;border-bottom:1px solid var(--line)}
+.dot{width:10px;height:10px;border-radius:50%}
+.find p{margin:2px 0 0;color:var(--mute);font-size:14px}
+.find strong{font-weight:600}
+.sum{font-size:17px;line-height:1.6;max-width:70ch}
+.sum p{margin:0 0 10px}
+.res{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-bottom:22px}
+.fig{position:relative;min-height:300px}.fig>svg{position:absolute;inset:0;width:100%;height:100%}
+svg text{font:13px Inter,sans-serif;fill:var(--mute);paint-order:stroke;stroke:var(--panel);stroke-width:4px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mute);font-weight:500}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{font-size:12px;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.note{color:var(--mute);font-size:13px;margin-top:10px}
+[hidden]{display:none!important}
+@media(max-width:900px){.tune,.res{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){.app{grid-template-columns:minmax(0,1fr)}.rail{flex-direction:row;flex-wrap:wrap;padding:10px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:10px;width:100%}.rail .foot{display:none}.read{grid-template-columns:repeat(2,minmax(0,1fr))}.find li{grid-template-columns:12px minmax(0,1fr)}.find .ghost{grid-column:2;justify-self:start}}
+@media(prefers-reduced-motion:no-preference){.read b{transition:color .3s}}
+</style></head><body>
+<div class="app">
+<nav class="rail" aria-label="Screens">
+ <div class="brand">iRacing <span>Optimiser</span></div>
+ <button class="nav" id="nav-tune" aria-current="true">Tune</button>
+ <button class="nav" id="nav-results" aria-current="false">Results</button>
+ <button class="nav" id="nav-backups" aria-current="false">Backups</button>
+ <div class="foot">New_Sim_PC · RTX 5080 · 3 × 1440p</div>
+</nav>
+<main>
+<section id="tune">
+ <h1>Your PC, measured</h1>
+ <p class="sub">Last bench 26 Nov, 4:14 PM · same replay, 5 runs · repeatable to 1.4%</p>
+ <div class="read">
+  <div><small>Average</small><b>86 fps</b><em>+10 since first run</em></div>
+  <div><small>1% low</small><b>71 fps</b><em>+38 since first run</em></div>
+  <div><small>Stutters per minute</small><b>0.2</b><em>was 180</em></div>
+  <div><small>Limit</small><b>GPU</b><small>busy 98% of frames</small></div>
+ </div>
+ <div class="tune">
+  <div class="card">
+   <h2>What matters most to you</h2>
+   <label for="focus" class="sub" style="margin:0">Drag to choose. Changing it never re-runs tests: it picks from what was measured.</label>
+   <input type="range" id="focus" min="0" max="4" step="1" value="1" aria-describedby="pick">
+   <div class="ends"><span>Smoothness</span><span>Graphics</span></div>
+   <p id="pick"></p>
+   <p class="lock">Stability is locked: every option must hold its frame rate with no extra stutters.</p>
+  </div>
+  <div class="card start">
+   <div>
+    <h2>Find improvements</h2>
+    <ul class="steps"><li>1. Open a race replay in iRacing</li><li>2. Click Start, leave the PC alone</li><li>3. Answer the prompts when a test needs you</li></ul>
+   </div>
+   <button class="btn" id="go">Start tuning</button>
+  </div>
+ </div>
+ <h2>Found on your PC</h2>
+ <ul class="find" id="finds"></ul>
+</section>
+
+<section id="results" hidden>
+ <h1>Background apps cost you half your 1% lows</h1>
+ <p class="sub">Every number here comes from the same replay segment on this PC</p>
+ <div class="res">
+  <div class="card"><h2>1% low over time</h2><div class="fig"><svg id="chart" role="img" aria-label="1% low fps per bench"></svg></div></div>
+  <div class="card sum"><h2>Summary</h2>
+   <p>Your GPU is the limit 98% of the time at about 86 fps across 7680 × 1440. The CPU has headroom.</p>
+   <p>SimHub and simmixer caused every stutter. Pausing them lifted 1% lows from 33 to 71 fps.</p>
+   <p>G-Sync is off, so at 86 fps on 240 Hz screens you see tearing. Not tested yet.</p>
+   <p>No graphics settings have been traded yet, so there are no compromises to report.</p>
+  </div>
+ </div>
+ <div class="card"><h2>Tests</h2>
+  <div class="scroll"><table><thead><tr><th>Test</th><th style="text-align:right">1% low</th><th style="text-align:right">p99 frame</th><th>Verdict</th></tr></thead><tbody id="tests"></tbody></table></div>
+  <p class="note">Rows marked "not run" show tests the app will offer next.</p>
+ </div>
+</section>
+
+<section id="backups" hidden>
+ <h1>Backups</h1>
+ <p class="sub">The app saves your iRacing settings before any change. One click puts them back.</p>
+ <div class="card"><table><thead><tr><th>Saved</th><th>Why</th><th></th></tr></thead><tbody>
+  <tr><td>26 Nov, 3:41 PM</td><td>Original settings, before the app changed anything</td><td class="n"><button class="ghost">Restore</button></td></tr>
+ </tbody></table></div>
+</section>
+</main></div>
+<script>{
+const picks=["Highest frame rate your PC holds, at the graphics level it needs","Smooth first, small graphics gains where free","Balanced","Graphics first, frame rate held steady at a lower cap","Most graphics your PC can run without stutter"];
+const finds=[
+ ["var(--good)","Background apps were causing all stutters","SimHub and simmixer: 1% low 33 → 71 fps with them paused","Pause while racing"],
+ ["var(--warn)","G-Sync is off and you are tearing","86 fps on 240 Hz screens. A single window across 3 screens may block G-Sync","Test on vs off"],
+ ["var(--warn)","The GPU is the limit","7680 × 1440 at 98% GPU. More fps has to come from graphics settings","Find trade-offs"],
+ ["var(--good)","Measurements are repeatable","5 runs within 1.4%, so A/B tests can be trusted",""]];
+const tests=[["Baseline (SimHub, simmixer running)","33","30.2 ms","Reference","var(--mute)"],["Background apps paused","71","14.0 ms","Better","var(--good)"],["G-Sync on vs off","–","–","Not run","var(--mute)"],["FPS cap 80 vs none","–","–","Not run","var(--mute)"],["Shadows medium vs high","–","–","Not run","var(--mute)"]];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+document.getElementById("finds").innerHTML=finds.map(f=>`<li><span class="dot" style="background:${f[0]}"></span><div><strong>${esc(f[1])}</strong><p>${esc(f[2])}</p></div>${f[3]?`<button class="ghost">${esc(f[3])}</button>`:"<span></span>"}</li>`).join("");
+document.getElementById("tests").innerHTML=tests.map(t=>`<tr><td>${esc(t[0])}</td><td class="n">${t[1]}</td><td class="n">${t[2]}</td><td><span class="tag" style="border:1px solid ${t[4]};color:${t[4]}">${esc(t[3])}</span></td></tr>`).join("");
+const f=document.getElementById("focus"),p=document.getElementById("pick");
+const upd=()=>{p.innerHTML="<b>"+esc(picks[f.value])+"</b>"};f.addEventListener("input",upd);upd();
+const screens=["tune","results","backups"];
+const show=n=>{screens.forEach(s=>{document.getElementById(s).hidden=s!==n;document.getElementById("nav-"+s).setAttribute("aria-current",s===n)});if(n==="results")draw()};
+screens.forEach(s=>document.getElementById("nav-"+s).addEventListener("click",()=>show(s)));
+document.getElementById("go").addEventListener("click",()=>show("results"));
+const s=document.getElementById("chart");
+const pts=[["26 Nov 3:50","With SimHub",33],["26 Nov 4:14","Paused",71]];
+const draw=()=>{const W=s.clientWidth,H=s.clientHeight;if(!W)return;const l=44,r=24,t=24,b=48,max=100;
+ const x=i=>l+(W-l-r)*(pts.length<2?.5:i/(pts.length-1)*0.7+0.15),y=v=>t+(H-t-b)*(1-v/max);
+ let g="";[0,25,50,75,100].forEach(v=>{g+=`<line x1="${l}" x2="${W-r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${l-8}" y="${y(v)+4}" text-anchor="end">${v}</text>`});
+ g+=`<polyline fill="none" stroke="var(--go)" stroke-width="3" points="${pts.map((q,i)=>x(i)+","+y(q[2])).join(" ")}"/>`;
+ pts.forEach((q,i)=>{g+=`<circle cx="${x(i)}" cy="${y(q[2])}" r="6" fill="var(--go)"/><text x="${x(i)}" y="${y(q[2])-14}" text-anchor="middle" style="fill:var(--ink);font-weight:600">${q[2]} fps</text><text x="${x(i)}" y="${H-24}" text-anchor="middle">${esc(q[1])}</text><text x="${x(i)}" y="${H-8}" text-anchor="middle">${esc(q[0])}</text>`});
+ s.innerHTML=g};
+const ro=new ResizeObserver(draw);ro.observe(s);
+}</script>
+</body></html>

@@ -28,8 +28,9 @@ CAP_TAIL_PCT = 2.0
 CAP_GPU_SHARE = 0.85
 
 PRESENT_MODE_NOTES = {
-    "independent": ("good", "Independent Flip: the game's frames go straight to the display. G-Sync/VRR can "
-                            "work and there is no extra compositor latency."),
+    "independent": ("good", "Independent Flip: the game's frames go straight to the display with no compositor "
+                            "delay. This is the only path where G-Sync can work, but it does not show that G-Sync "
+                            "is actually on."),
     "composed_flip": ("warn", "Composed Flip: Windows' compositor (DWM) assembles each frame. This usually adds "
                               "about one refresh of latency and G-Sync may not engage. With a window spanning "
                               "three separate monitors this is expected, because Independent Flip only works on "
@@ -69,7 +70,17 @@ def present_mode_summary(frames: list[Frame]) -> dict:
     tearing = Counter(fr.allows_tearing for fr in frames if fr.allows_tearing is not None)
     sync = Counter(fr.sync_interval for fr in frames if fr.sync_interval is not None)
     level, note = PRESENT_MODE_NOTES[kind]
+    tear_pct = (100 * tearing.get(True, 0) / sum(tearing.values())) if tearing else None
+    si = sync.most_common(1)[0][0] if sync else None
+    if si == 0 and tear_pct is not None and tear_pct >= 90:
+        sync_note = ("V-Sync is off and tearing is allowed. Unless G-Sync is on and working on every screen, "
+                     "each frame replaces the last mid-refresh, which shows as tearing.")
+    elif si and si >= 1:
+        sync_note = "V-Sync is on: frames wait for the next refresh. No tearing, but up to a refresh of extra latency."
+    else:
+        sync_note = None
     return {
+        "sync_note": sync_note,
         "available": True,
         "dominant": dominant,
         "dominant_pct": 100 * count / n,
@@ -126,7 +137,8 @@ def run_metrics(frames: list[Frame]) -> dict:
         "low1_fps": 1000 / p99,
         "low01_fps": 1000 / p999,
         "pacing_error_ms": pacing,
-        "stutters": count_stutters(fts),
+        "stutters": (st := count_stutters(fts)),
+        "stutters_per_min": st / max(1e-6, sum(fts) / 60000),
     }
     disp_known = [fr for fr in frames if fr.displayed is not None]
     if disp_known:

@@ -201,12 +201,75 @@ def _sleep(seconds: float, stop: threading.Event | None):
         raise Aborted()
 
 
+@dataclass
+class Variant:
+    """One side of an A/B test. apply() runs before this variant's runs (it may block, e.g. waiting for the
+    user to change a setting), revert() after them. A plain bench has one variant with neither."""
+    name: str
+    apply: Callable[[], None] | None = None
+    revert: Callable[[], None] | None = None
+    manual: bool = False
+    description: str = ""
+
+
+def schedule(variants: list[Variant], runs: int, warmup_runs: int) -> list[tuple[int, bool]]:
+    """(variant index, is_warmup) for every run. Warm-ups use the first variant. With two or more variants the
+    measured runs go in balanced blocks (A B, B A, A B …), so drift over the session hits every side equally
+    and the number of switches stays low."""
+    out = [(0, True)] * warmup_runs
+    if len(variants) == 1:
+        return out + [(0, False)] * runs
+    order = list(range(len(variants)))
+    for r in range(runs):
+        block = order if r % 2 == 0 else order[::-1]
+        out += [(v, False) for v in block]
+    return out
+
+
+MIN_SECONDS = 10.0
+
+
+def validate(cfg: BenchConfig) -> None:
+    if not cfg.seconds or cfg.seconds < MIN_SECONDS:
+        raise ValueError(f"Seconds per run must be at least {MIN_SECONDS:.0f}.")
+    if not cfg.runs or cfg.runs < 3:
+        raise ValueError("Use at least 3 runs: fewer can't show whether the result repeats.")
+    if cfg.warmup_runs is None or cfg.warmup_runs < 0:
+        raise ValueError("Warm-up runs can't be negative.")
+
+
+def _default_preflight() -> str | None:
+    from . import winsys
+    return winsys.elevation_mismatch()
+
+
+def _default_surface() -> dict:
+    from . import winsys
+    try:
+        return winsys.render_surface()
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+def _default_background():
+    from . import winsys
+    return winsys.BackgroundSampler()
+
+
 def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_factory: Callable[[Path], object],
               log: Callable[[str], None] = print, stop: threading.Event | None = None,
               sampler: GpuSampler | None = None, fingerprint: Callable[[], dict] = _fingerprint,
-              clock: Callable[[], float] = time.time) -> Path:
-    """Runs the bench and returns the bundle directory. capture_factory(csv_path) -> object with
-    start() -> bool, stop(), .error and .started_at (presentmon.Capture fits)."""
+              clock: Callable[[], float] = time.time, variants: list[Variant] | None = None,
+              preflight: Callable[[], str | None] = _default_preflight,
+              surface: Callable[[], dict] = _default_surface,
+              background=None, kind: str = "bench") -> Path:
+    """Runs the bench (or an A/B test when several variants are given) and returns the bundle directory.
+    capture_factory(csv_path) -> object with start() -> bool, stop(), .error and .started_at."""
+    validate(cfg)
+    variants = variants or [Variant("Current settings")]
+    problem = preflight() if preflight else None
+    if problem:
+        raise RuntimeError(problem)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bdir = Path(out_root) / "bench" / stamp
     bdir.mkdir(parents=True, exist_ok=True)
@@ -224,25 +287,52 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
     log(f"Replay frame {start_frame}, car #{cam.car_number}, camera group {cam.group}.")
 
     fp = fingerprint()
+    fp["render_surface"] = surface() if surface else {"available": False}
     cap = capture_factory(raw_csv)
     if not cap.start():
         raise RuntimeError(f"PresentMon could not start: {getattr(cap, 'error', '') or 'unknown error'}. "
                            "If this is a permission problem, use 'Grant permission…' on the Session monitor tab.")
     sampler = sampler or GpuSampler()
     sampler.start()
+    bg = background if background is not None else _default_background()
+    bg.start()
     windows: list[RunWindow] = []
-    total = cfg.warmup_runs + cfg.runs
+    plan = schedule(variants, cfg.runs, cfg.warmup_runs)
+    active: int | None = None
+    counts = [0] * len(variants)
+
+    def switch(to: int):
+        nonlocal active
+        if active == to:
+            return
+        if active is not None and variants[active].revert:
+            variants[active].revert()
+        active = None
+        if variants[to].apply:
+            log(f"Switching to: {variants[to].name}")
+            variants[to].apply()
+        active = to
+
     try:
-        for i in range(total):
-            warm = i < cfg.warmup_runs
-            label = f"warm-up {i + 1}" if warm else f"run {i - cfg.warmup_runs + 1}/{cfg.runs}"
+        for i, (vi, warm) in enumerate(plan):
+            v = variants[vi]
             driver.pause()
+            switch(vi)
+            if not warm:
+                counts[vi] += 1
+            label = (f"warm-up {i + 1}" if warm else
+                     f"{v.name} run {counts[vi]}/{cfg.runs}" if len(variants) > 1 else f"run {counts[vi]}/{cfg.runs}")
             driver.seek(start_frame)
             t_seek = clock()
             got = driver.current_frame()
+            first = got
             while got is None or abs(got - start_frame) > 5:
                 if clock() - t_seek > cfg.seek_timeout_s:
-                    raise RuntimeError(f"The replay did not move to frame {start_frame} (it is at {got}).")
+                    hint = ""
+                    if got is not None and first is not None and got > first:
+                        hint = (" The replay kept playing and ignored the jump. This happens when iRacing runs "
+                                "as administrator and this app does not: run this app as administrator too.")
+                    raise RuntimeError(f"The replay did not move to frame {start_frame} (it is at {got}).{hint}")
                 _sleep(0.2, stop)
                 got = driver.current_frame()
             driver.set_camera(cam)
@@ -256,17 +346,24 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
             driver.pause()
             f1 = driver.current_frame()
             w = RunWindow(i, warm, t0 + cfg.lead_trim_s, t1, f0, f1)
+            w_dict = asdict(w) | {"variant": v.name}
             if f0 is not None and f1 is not None:
                 expected = cfg.seconds * REPLAY_TICKS_PER_S
                 adv = f1 - f0
                 if adv < expected * 0.85 or adv > expected * 1.15:
-                    w.valid = False
-                    w.note = (f"Replay advanced {adv} frames, expected about {expected:.0f}. "
-                              "It was probably not playing at 1x the whole time.")
-                    log(f"{label}: {w.note}")
-            windows.append(w)
+                    w_dict["valid"] = False
+                    w_dict["note"] = (f"Replay advanced {adv} frames, expected about {expected:.0f}. "
+                                      "It was probably not playing at 1x the whole time.")
+                    log(f"{label}: {w_dict['note']}")
+            windows.append(w_dict)
     finally:
+        try:
+            if active is not None and variants[active].revert:
+                variants[active].revert()
+        except Exception as e:
+            log(f"Could not undo the last change: {e}")
         sampler.stop()
+        bg.stop()
         try:
             driver.pause()
         except Exception:
@@ -276,12 +373,15 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
 
     meta = {
         "bundle_version": BUNDLE_VERSION,
+        "kind": kind if len(variants) == 1 else "ab",
         "created": datetime.now().isoformat(timespec="seconds"),
         "config": asdict(cfg) | {"start_frame": start_frame},
         "camera": asdict(cam),
+        "variants": [{"name": v.name, "manual": v.manual, "description": v.description} for v in variants],
         "capture_t0": getattr(cap, "started_at", None),
-        "windows": [asdict(w) for w in windows],
+        "windows": windows,
         "gpu_samples": sampler.samples,
+        "background_samples": getattr(bg, "samples", []),
         "fingerprint": fp,
     }
     (bdir / "bench.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
@@ -311,33 +411,60 @@ def _gpu_in(samples: list[dict], t0: float, t1: float) -> dict:
 
 def analyze_bundle(bdir: Path) -> dict:
     """(Re)analyses a bench bundle. Writes summary.json and report.html and returns the summary."""
+    from . import abtest, winsys
     bdir = Path(bdir)
     meta = json.loads((bdir / "bench.json").read_text(encoding="utf-8"))
     src = bdir / "frames.csv.gz"
     if not src.is_file():
         src = bdir / "presentmon_raw.csv.gz"
     all_frames, info = framelib.load(src, t0=meta.get("capture_t0")) if src.is_file() else ([], {"columns": {}})
-    runs, measured = [], []
+    vnames = [v["name"] for v in meta.get("variants") or [{"name": "Current settings"}]]
+    runs = []
+    measured: dict[str, list] = {n: [] for n in vnames}
+    bgs = meta.get("background_samples") or []
     for w in meta["windows"]:
+        w = {"variant": vnames[0], **w}
         fr = framelib.slice_window(all_frames, w["t_start"], w["t_end"])
         m = metrics.run_metrics(fr)
         m.update(_gpu_in(meta.get("gpu_samples") or [], w["t_start"], w["t_end"]))
         if not fr:
             w = {**w, "valid": False, "note": (w.get("note") or "") + " No PresentMon frames in this window."}
-        runs.append({"window": w, "metrics": m})
+        bg_rows = winsys.summarize_background(bgs, w["t_start"], w["t_end"], top=5)
+        runs.append({"window": w, "metrics": m, "background": bg_rows})
         if not w["warmup"] and w["valid"] and m:
-            measured.extend(fr)
-    rep = metrics.repeatability([r["metrics"] for r in runs if not r["window"]["warmup"] and r["window"]["valid"]])
+            measured.setdefault(w["variant"], []).extend(fr)
+    per_variant = {n: [r["metrics"] for r in runs if r["window"]["variant"] == n and not r["window"]["warmup"]
+                       and r["window"]["valid"] and r["metrics"]] for n in vnames}
+    base = vnames[0]
+    rep = metrics.repeatability(per_variant[base])
+    comparisons = [abtest.compare(per_variant[base], per_variant[n], base, n) for n in vnames[1:]]
+    base_frames = measured.get(base) or []
+    fp = meta.get("fingerprint") or {}
+    surf = fp.get("render_surface") or {}
+    refresh = (surf.get("refresh") or [None])[0] if surf.get("available") else \
+        (fp.get("hardware", {}).get("display") or {}).get("refresh")
+    caps = abtest.predict_caps([f.frametime for f in base_frames], refresh) if not rep.get("cap_fps") else \
+        {"available": False, "reason": "The baseline runs were capped, so the PC's headroom is hidden."}
+    bg_all = winsys.summarize_background(
+        bgs, *(lambda ws: (min(ws), max(ws)) if ws else (None, None))(
+            [w["t_start"] for w in meta["windows"]] + [w["t_end"] for w in meta["windows"]]), top=8)
     summary = {
+        "kind": meta.get("kind", "bench"),
         "created": meta.get("created"),
         "config": meta.get("config"),
         "camera": meta.get("camera"),
+        "variants": meta.get("variants"),
         "runs": runs,
         "repeatability": rep,
-        "present_mode": metrics.present_mode_summary(measured),
+        "comparisons": comparisons,
+        "caps": caps,
+        "background": bg_all,
+        "suspects": winsys.suspects(bg_all),
+        "present_mode": metrics.present_mode_summary(base_frames),
         "columns": info.get("columns"),
-        "display": (meta.get("fingerprint") or {}).get("hardware", {}).get("display"),
-        "gpus": (meta.get("fingerprint") or {}).get("hardware", {}).get("gpus"),
+        "surface": surf,
+        "display": fp.get("hardware", {}).get("display"),
+        "gpus": fp.get("hardware", {}).get("gpus"),
     }
     (bdir / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     (bdir / "report.html").write_text(render_report(summary), encoding="utf-8")
@@ -376,46 +503,92 @@ RUN_COLS = (("avg_fps", "Avg FPS", 0), ("frametime_p50_ms", "Median ms", 2), ("f
 
 
 def render_report(s: dict) -> str:
+    e = lambda x: html.escape(str(x))
     rep, pm = s["repeatability"], s["present_mode"]
     colour = {"pass": "#1e8449", "fail": "#c0392b", "capped": "#c0392b"}.get(rep.get("verdict"), "#b9770e")
-    rows = []
+    multi = len(s.get("variants") or []) > 1
+    rows, n_by = [], {}
     for r in s["runs"]:
         w, m = r["window"], r["metrics"]
-        name = f"Warm-up {w['index'] + 1}" if w["warmup"] else f"Run {w['index'] + 1 - sum(1 for x in s['runs'] if x['window']['warmup'])}"
+        if w["warmup"]:
+            name = f"Warm-up {w['index'] + 1}"
+        else:
+            n_by[w.get("variant")] = n_by.get(w.get("variant"), 0) + 1
+            name = (f"{e(w.get('variant'))} #{n_by[w.get('variant')]}" if multi else f"Run {n_by[w.get('variant')]}")
         style = ' style="color:#999"' if (w["warmup"] or not w["valid"]) else ""
         cells = "".join(f"<td>{_f(m.get(k), nd)}</td>" for k, _l, nd in RUN_COLS)
-        note = html.escape(w.get("note") or ("excluded (warm-up)" if w["warmup"] else ""))
+        note = e(w.get("note") or ("excluded (warm-up)" if w["warmup"] else ""))
         rows.append(f"<tr{style}><td>{name}</td>{cells}<td>{note}</td></tr>")
-    head = "".join(f"<th>{html.escape(l)}</th>" for _k, l, _nd in RUN_COLS)
+    head = "".join(f"<th>{e(l)}</th>" for _k, l, _nd in RUN_COLS)
     spread = "".join(
-        f"<tr><td>{html.escape(v['label'])}</td><td>{_f(v['median'], 2)}</td><td>{_f(v['min'], 2)} – {_f(v['max'], 2)}</td>"
+        f"<tr><td>{e(v['label'])}</td><td>{_f(v['median'], 2)}</td><td>{_f(v['min'], 2)} – {_f(v['max'], 2)}</td>"
         f"<td><b>{_f(v['spread_pct'])}%</b></td><td>{'yes' if v['trend'] else ''}</td></tr>"
         for v in rep.get("metrics", {}).values())
+    ab = ""
+    for c in s.get("comparisons") or []:
+        vc = {"better": "#1e8449", "worse": "#c0392b", "mixed": "#b9770e"}.get(c["verdict"], "#444")
+        mrows = "".join(f"<tr><td>{e(m['label'])}</td><td>{_f(m['a'], 2)}</td><td>{_f(m['b'], 2)}</td>"
+                        f"<td>{_f(m['delta_pct'])}{'%' if m['delta_pct'] is not None else ''}</td><td>{e(m['result'])}</td></tr>"
+                        for m in c["metrics"].values())
+        ab += (f"<p style='font-size:17px;color:{vc}'><b>{e(c['verdict_text'])}</b></p><table><tr><th>Metric</th>"
+               f"<th>{e(c['baseline'])}</th><th>{e(c['variant'])}</th><th>Change</th><th>Result</th></tr>{mrows}</table>")
+    ab_html = f"<h2>A/B result</h2>{ab}" if ab else ""
     if pm.get("available"):
         pcol = {"good": "#1e8449", "warn": "#b9770e", "bad": "#c0392b"}[pm["level"]]
-        modes = ", ".join(f"{html.escape(k)} {v:.0f}%" for k, v in pm["modes"].items())
-        pm_html = (f"<p style='color:{pcol}'><b>{html.escape(pm['dominant'])}</b> ({pm['dominant_pct']:.0f}% of frames)</p>"
-                   f"<p>{html.escape(pm['note'])}</p><p class=m>All modes: {modes}. Sync interval: {_f(pm['sync_interval'], 0)}. "
-                   f"Tearing allowed: {_f(pm['allows_tearing_pct'], 0)}% of frames.</p>")
+        modes = ", ".join(f"{e(k)} {v:.0f}%" for k, v in pm["modes"].items())
+        sync = f"<p><b>{e(pm['sync_note'])}</b></p>" if pm.get("sync_note") else ""
+        pm_html = (f"<p style='color:{pcol}'><b>{e(pm['dominant'])}</b> ({pm['dominant_pct']:.0f}% of frames)</p>"
+                   f"<p>{e(pm['note'])}</p>{sync}<p class=m>All modes: {modes}. Sync interval: {_f(pm['sync_interval'], 0)}. "
+                   f"Tearing allowed: {_f(pm['allows_tearing_pct'], 0)}% of frames. The app can't read whether G-Sync "
+                   "is on; turn on NVIDIA's G-SYNC indicator to check each screen.</p>")
     else:
         pm_html = "<p>PresentMon did not report a present mode in this capture.</p>"
+    surf = s.get("surface") or {}
+    surf_html = ""
+    if surf.get("available"):
+        surf_html = (f"<p>iRacing renders <b>{surf['width']}×{surf['height']}</b> ({surf['megapixels']} megapixels) "
+                     f"across {surf['monitors']} monitor{'s' if surf['monitors'] != 1 else ''}"
+                     f"{' at ' + '/'.join(str(r) for r in surf['refresh']) + ' Hz' if surf.get('refresh') else ''}.</p>"
+                     + (f"<p>{e(surf['note'])}</p>" if surf.get("note") else ""))
+    caps = s.get("caps") or {}
+    cap_html = ""
+    if caps.get("available"):
+        crow = "".join(f"<tr><td>{c['cap']}</td><td>{c['held_pct']:.1f}%</td><td>{'yes' if c['holds'] else ''}</td></tr>"
+                       for c in caps["rows"])
+        cap_html = (f"<h2>Which FPS cap would hold</h2><p><b>{e(caps['text'])}</b></p>"
+                    f"<p class=m>Predicted from the uncapped runs. A cap also frees GPU time, so this is on the safe "
+                    f"side; confirm with an A/B run at that cap.</p><table><tr><th>Cap</th><th>Frames in time</th>"
+                    f"<th>Holds</th></tr>{crow}</table>")
+    elif caps.get("reason"):
+        cap_html = f"<h2>Which FPS cap would hold</h2><p>{e(caps['reason'])}</p>"
+    bg = s.get("background") or []
+    bg_html = ""
+    if bg:
+        brow = "".join(f"<tr><td>{e(b['name'])}</td><td>{b['avg_cores']:.2f}</td><td>{b['peak_cores']:.2f}</td>"
+                       f"<td>{'' if b['protected'] else 'yes'}</td></tr>" for b in bg)
+        sus = s.get("suspects") or []
+        lead = (f"<p><b>Worth testing: {e(', '.join(sus))}.</b> Run the 'Background apps' A/B test to measure what "
+                "they cost.</p>" if sus else "<p>No busy background apps found.</p>")
+        bg_html = (f"<h2>Background apps while the replay ran</h2>{lead}<table><tr><th>Process</th><th>Avg cores</th>"
+                   f"<th>Peak cores</th><th>Can be paused</th></tr>{brow}</table>")
     cols = s.get("columns") or {}
     missing = [k for k in ("present_mode", "display_change", "until_displayed", "display_latency") if not cols.get(k)]
     col_note = (f"<p class=m>Columns not in this PresentMon log: {', '.join(missing)}.</p>" if missing else "")
-    disp = s.get("display") or {}
     cfg, cam = s.get("config") or {}, s.get("camera") or {}
-    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Replay bench {html.escape(str(s.get('created')))}</title>
+    title = "A/B test" if multi else "Replay bench"
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>{title} {e(s.get('created'))}</title>
 <style>body{{font:14px Segoe UI,Arial,sans-serif;margin:24px;max-width:1200px;color:#222}}
 table{{border-collapse:collapse;margin:8px 0 18px}}td,th{{border-bottom:1px solid #ddd;padding:4px 10px;text-align:right}}
 td:first-child,th:first-child{{text-align:left}}.m{{color:#666}}h2{{margin-top:28px}}</style></head><body>
-<h1>Replay bench</h1>
-<p class=m>{html.escape(str(s.get('created')))} · replay frame {_f(cfg.get('start_frame'), 0)} · car #{html.escape(str(cam.get('car_number')))}
- · {_f(cfg.get('seconds'), 0)} s × {_f(cfg.get('runs'), 0)} runs (+{_f(cfg.get('warmup_runs'), 0)} warm-up)
- · display {html.escape(str(disp.get('width')))}×{html.escape(str(disp.get('height')))} @ {html.escape(str(disp.get('refresh')))} Hz</p>
+<h1>{title}</h1>
+<p class=m>{e(s.get('created'))} · replay frame {_f(cfg.get('start_frame'), 0)} · car #{e(cam.get('car_number'))}
+ · {_f(cfg.get('seconds'), 0)} s × {_f(cfg.get('runs'), 0)} runs{' per side' if multi else ''} (+{_f(cfg.get('warmup_runs'), 0)} warm-up)</p>
+{surf_html}{ab_html}
 <h2>Is the measurement repeatable?</h2>
-<p style="font-size:17px;color:{colour}"><b>{html.escape(rep.get('verdict_text', ''))}</b></p>
+<p style="font-size:17px;color:{colour}"><b>{e(rep.get('verdict_text', ''))}</b></p>
 <table><tr><th>Metric</th><th>Median</th><th>Range</th><th>Spread</th><th>Steady drift</th></tr>{spread}</table>
-<h2>Present path (G-Sync check)</h2>{pm_html}{col_note}
+{bg_html}{cap_html}
+<h2>Present path and tearing</h2>{pm_html}{col_note}
 <h2>Every run</h2>
 <table><tr><th></th>{head}<th>Note</th></tr>{''.join(rows)}</table>
 <p class=m>p99 = 99th percentile frame time. 1% low = 1000 / p99. Pacing error = average change in frame time from one

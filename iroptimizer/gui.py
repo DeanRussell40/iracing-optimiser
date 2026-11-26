@@ -424,28 +424,47 @@ class App(tk.Tk):
         ttk.Label(f, text=_("Las sesiones se guardan en {p0}", p0=self.out_dir), style="Muted.TLabel").pack(anchor="w", pady=4)
 
     # ------------------------------------------------------------------ replay bench (milestone 1)
+    BENCH_TESTS = ("Repeatability check (changes nothing)",
+                   "Background apps: running vs paused (automatic)",
+                   "Something you switch yourself (guided A/B)")
+
     def _tab_bench(self):
         f = ttk.Frame(self.nb, padding=14)
         self.nb.add(f, text="Replay bench")
-        steps = ("Checks whether measurements on this PC are repeatable, and whether iRacing is on the Independent Flip "
-                 "path (needed for G-Sync). It changes no settings.\n\n"
+        steps = ("Runs the same replay segment several times and measures it. A/B tests alternate two setups "
+                 "(A B B A A B …) so the comparison is fair.\n\n"
                  "1. In iRacing, open a replay with traffic (a race start is ideal).\n"
-                 "2. Pick the car and the cockpit camera, and move the replay to where the segment should start.\n"
-                 "3. Click Start and leave the PC alone. The bench seeks back to that point for every run.\n\n"
-                 "Before you start: turn off every frame rate cap (NVIDIA app Max Frame Rate, iRacing FPS limit, V-Sync). "
-                 "A capped run is reported as NOT VALID because a cap hides the PC's real headroom.")
+                 "2. Pick the car and the cockpit camera, move the replay to where the segment should start, and pause it.\n"
+                 "3. Choose a test, click Start and leave the PC alone unless the app asks you to switch something.\n\n"
+                 "For the repeatability check turn off every frame rate cap first (NVIDIA app Max Frame Rate, iRacing FPS "
+                 "limit, V-Sync): a cap hides the PC's real headroom.")
         ttk.Label(f, text=steps, justify="left", wraplength=1000).pack(anchor="w")
+        trow = ttk.Frame(f)
+        trow.pack(anchor="w", pady=(12, 0))
+        ttk.Label(trow, text="Test").pack(side="left", padx=(0, 6))
+        self.bench_test = tk.StringVar(value=self.BENCH_TESTS[0])
+        cb = ttk.Combobox(trow, textvariable=self.bench_test, values=self.BENCH_TESTS, state="readonly", width=46)
+        cb.pack(side="left")
+        self.ab_a = tk.StringVar(value="G-Sync off")
+        self.ab_b = tk.StringVar(value="G-Sync on")
+        self.ab_row = ttk.Frame(f)
+        ttk.Label(self.ab_row, text="A (what you have now)").pack(side="left", padx=(0, 4))
+        ttk.Entry(self.ab_row, textvariable=self.ab_a, width=24).pack(side="left", padx=(0, 16))
+        ttk.Label(self.ab_row, text="B (what to try)").pack(side="left", padx=(0, 4))
+        ttk.Entry(self.ab_row, textvariable=self.ab_b, width=24).pack(side="left")
+        cb.bind("<<ComboboxSelected>>", lambda e: self._bench_test_changed())
         row = ttk.Frame(f)
         row.pack(anchor="w", pady=12)
+        self.bench_row = row
         self.bench_vars = {}
         for key, label, default, lo, hi, inc in (("seconds", "Seconds per run", 60, 15, 600, 5),
-                                                ("runs", "Runs", 5, 3, 20, 1),
+                                                ("runs", "Runs (per side in A/B)", 5, 3, 20, 1),
                                                 ("warmup", "Warm-up runs", 1, 0, 3, 1)):
             ttk.Label(row, text=label).pack(side="left", padx=(0, 4))
-            v = tk.IntVar(value=default)
+            v = tk.StringVar(value=str(default))
             ttk.Spinbox(row, from_=lo, to=hi, increment=inc, width=5, textvariable=v).pack(side="left", padx=(0, 16))
             self.bench_vars[key] = v
-        self.btn_bench = ttk.Button(row, text="▶  Start bench", style="Accent.TButton", command=self.start_bench)
+        self.btn_bench = ttk.Button(row, text="▶  Start", style="Accent.TButton", command=self.start_bench)
         self.btn_bench.pack(side="left", padx=(8, 0))
         self.btn_bench_stop = ttk.Button(row, text="■  Stop", command=self.stop_bench, state="disabled")
         self.btn_bench_stop.pack(side="left", padx=8)
@@ -453,9 +472,21 @@ class App(tk.Tk):
         ttk.Label(f, textvariable=self.bench_eta, style="Muted.TLabel").pack(anchor="w")
         self.bench_log = tk.Text(f, height=14, relief="flat", font=("Consolas", 9))
         self.bench_log.pack(fill="both", expand=True, pady=(6, 0))
-        ttk.Label(f, text=f"Results are saved in {self.out_dir / 'bench'}. Send back the bench_*.zip file for analysis.",
-                  style="Muted.TLabel").pack(anchor="w", pady=4)
+        ttk.Label(f, text=f"Results are saved in {self.out_dir / 'bench'}.", style="Muted.TLabel").pack(anchor="w", pady=4)
         self.bench_stop_ev = threading.Event()
+        try:
+            from . import winsys
+            n = winsys.resume_leftovers(self.out_dir)
+            if n:
+                self.after(500, lambda: self._bench_log(f"Resumed {n} app(s) a previous test left paused."))
+        except Exception:
+            pass
+
+    def _bench_test_changed(self):
+        if self.bench_test.get() == self.BENCH_TESTS[2]:
+            self.ab_row.pack(anchor="w", pady=(8, 0), before=self.bench_row)
+        else:
+            self.ab_row.pack_forget()
 
     def _bench_log(self, text):
         def add():
@@ -463,8 +494,39 @@ class App(tk.Tk):
             self.bench_log.see("end")
         self.ui(add)
 
+    def _ask_user(self, text: str) -> None:
+        """Blocks the bench thread until the user confirms. Brings the window to the front, because iRacing
+        usually covers every screen."""
+        done = threading.Event()
+
+        def show():
+            try:
+                if sys.platform == "win32":
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
+            self.deiconify()
+            self.attributes("-topmost", True)
+            self.lift()
+            self.focus_force()
+            messagebox.showinfo(APP, text, parent=self)
+            self.attributes("-topmost", False)
+            done.set()
+        self.ui(show)
+        while not done.wait(0.2):
+            if self.bench_stop_ev.is_set():
+                from .bench import Aborted
+                raise Aborted()
+
+    def _int(self, key: str) -> int | None:
+        try:
+            return int(float(self.bench_vars[key].get()))
+        except (ValueError, tk.TclError):
+            return None
+
     def start_bench(self):
-        from . import bench
+        from . import bench, winsys
         exe = presentmon.find_exe([self.out_dir / "tools"])
         if not exe:
             messagebox.showerror(APP, "PresentMon was not found. The bench needs it.")
@@ -472,10 +534,53 @@ class App(tk.Tk):
         if self.mon_thread and self.mon_thread.is_alive():
             messagebox.showerror(APP, "Stop the session recording first.")
             return
-        cfg = bench.BenchConfig(seconds=float(self.bench_vars["seconds"].get()), runs=int(self.bench_vars["runs"].get()),
-                                warmup_runs=int(self.bench_vars["warmup"].get()))
-        total = (cfg.runs + cfg.warmup_runs) * (cfg.seconds + cfg.settle_s + 2)
-        self.bench_eta.set(f"Takes about {total / 60:.0f} minutes. Don't touch the PC while it runs.")
+        problem = winsys.elevation_mismatch()
+        if problem:
+            if messagebox.askyesno(APP, problem + "\n\nRestart this app as administrator now?"):
+                if winsys.relaunch_as_admin():
+                    self.quit_app()
+            return
+        seconds, runs, warm = self._int("seconds"), self._int("runs"), self._int("warmup")
+        if not seconds or seconds < bench.MIN_SECONDS:
+            messagebox.showerror(APP, f"Enter the seconds per run ({bench.MIN_SECONDS:.0f} or more; 60 is a good default).")
+            return
+        if not runs or runs < 3:
+            messagebox.showerror(APP, "Enter at least 3 runs.")
+            return
+        cfg = bench.BenchConfig(seconds=float(seconds), runs=runs, warmup_runs=warm or 0)
+        test = self.bench_test.get()
+        variants = None
+        if test == self.BENCH_TESTS[1]:
+            self._bench_log("Looking for busy background apps (5 seconds)…")
+            smp = winsys.BackgroundSampler(interval_s=1.0)
+            smp.start()
+            time.sleep(5)
+            smp.stop()
+            names = winsys.suspects(winsys.summarize_background(smp.samples, top=12))
+            if not names:
+                messagebox.showinfo(APP, "No busy background apps found, so there is nothing to test.")
+                return
+            if not messagebox.askyesno(APP, "These apps will be paused during the B runs and resumed straight after:\n\n"
+                                       + "\n".join(f"  • {n}" for n in names) +
+                                       "\n\nWhile paused they stop responding (e.g. SimHub dashes and wheel LEDs). Go ahead?"):
+                return
+            pauser = winsys.ProcessPauser(self.out_dir)
+            variants = [bench.Variant("Background apps running"),
+                        bench.Variant("Background apps paused", apply=lambda: self._bench_log(
+                            "Paused: " + (", ".join(pauser.pause(names)) or "nothing (no access?)")),
+                            revert=pauser.resume, description=", ".join(names))]
+        elif test == self.BENCH_TESTS[2]:
+            a, b = self.ab_a.get().strip() or "A", self.ab_b.get().strip() or "B"
+            variants = [bench.Variant(a, manual=True, apply=lambda: self._ask_user(
+                            f"Set up A now: {a}\n\nThe replay is paused. Change it in iRacing or the NVIDIA app, "
+                            "then click OK. Don't move the replay or the camera.")),
+                        bench.Variant(b, manual=True, apply=lambda: self._ask_user(
+                            f"Set up B now: {b}\n\nThe replay is paused. Change it, then click OK."))]
+        n_runs = cfg.runs * (len(variants) if variants else 1) + cfg.warmup_runs
+        total = n_runs * (cfg.seconds + cfg.settle_s + 2)
+        extra = " The app will ask you to switch between A and B a few times." if test == self.BENCH_TESTS[2] else \
+            " Don't touch the PC while it runs."
+        self.bench_eta.set(f"Takes about {total / 60:.0f} minutes.{extra}")
         self.bench_stop_ev.clear()
         self.btn_bench.configure(state="disabled")
         self.btn_bench_stop.configure(state="normal")
@@ -483,12 +588,15 @@ class App(tk.Tk):
         def run():
             try:
                 bdir = bench.run_bench(cfg, self.out_dir, bench.IRSDKDriver(), lambda p: presentmon.Capture(exe, p),
-                                       log=self._bench_log, stop=self.bench_stop_ev)
+                                       log=self._bench_log, stop=self.bench_stop_ev, variants=variants)
                 s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
+                for c in s.get("comparisons") or []:
+                    self._bench_log(c["verdict_text"])
                 self._bench_log(s["repeatability"]["verdict_text"])
-                pm = s.get("present_mode") or {}
-                if pm.get("available"):
-                    self._bench_log(f"Present path: {pm['dominant']} ({pm['dominant_pct']:.0f}% of frames)")
+                if (s.get("caps") or {}).get("text"):
+                    self._bench_log(s["caps"]["text"])
+                if s.get("suspects"):
+                    self._bench_log("Busy background apps: " + ", ".join(s["suspects"]))
                 self._bench_log(f"Report: {bdir / 'report.html'}")
                 webbrowser.open((bdir / "report.html").resolve().as_uri())
             except bench.Aborted:
