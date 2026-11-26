@@ -118,3 +118,5 @@ tr.group th{text-align:left;padding-top:16px;color:var(--ink);font-size:13px}td.
 .chip{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:20px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}.chip[aria-pressed=true]{border-color:var(--go);color:var(--go)}
 .fold{background:none;border:0;color:var(--ink);font:inherit;font-weight:600;cursor:pointer;padding:0}tr.summary td{font-weight:600}
 tr.summary td.why{font-weight:400}
+tr.event td{color:var(--mute);font-size:13px}tr.event .tag{margin-right:6px}
+#note-text{width:100%;min-width:420px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}

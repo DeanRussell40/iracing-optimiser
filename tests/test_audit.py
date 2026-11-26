@@ -32,7 +32,7 @@ def by_name(items):
 def test_windows_items_read_values():
     w = by_name(audit.windows_items(run=fake_run, reg=fake_reg, timer=lambda: 0.5))
     assert w["Power plan"]["value"] == "Balanced" and w["Power plan"]["level"] == "test"
-    assert w["Power plan"]["test"] == {"a": "Balanced plan", "b": "High performance plan"}
+    assert w["Power plan"]["test"]["auto"] == "powerplan"
     assert w["Core parking (minimum cores unparked)"]["value"] == "100%"
     assert w["Hardware-accelerated GPU scheduling"]["value"] == "On"
     assert w["Multiplane overlay (MPO)"]["value"] == "On (Windows default)"

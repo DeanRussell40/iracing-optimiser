@@ -21,7 +21,7 @@ from . import __version__, abtest, dashboard
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
-TESTS = ("repeat", "background", "guided")
+TESTS = ("repeat", "background", "guided", "powerplan")
 
 
 def default_out_dir() -> Path:
@@ -62,7 +62,8 @@ class Api:
                  sampler_factory: Callable | None = None, pauser_factory: Callable | None = None,
                  ini_dir: Callable[[], Path] | None = None, scan_seconds: float = 5.0, opener: Callable = _open,
                  bench_overrides: dict | None = None, updater=None, settings_snapshot: Callable | None = None,
-                 simhub_capture: Callable | None = None, audit_parts: dict | None = None):
+                 simhub_capture: Callable | None = None, audit_parts: dict | None = None,
+                 powercfg: Callable | None = None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
         self._window = None
@@ -86,6 +87,7 @@ class Api:
         self._snapshot_fn = settings_snapshot
         self._simhub_fn = simhub_capture
         self._audit_parts = audit_parts
+        self._powercfg = powercfg
         try:
             from . import presentmon
             presentmon.ensure_cached()  # a copy outside the temp folder, in case that folder disappears
@@ -96,6 +98,9 @@ class Api:
             self._resumed = winsys.resume_leftovers(self._out_dir)
         except Exception:
             pass
+        from . import powerplan
+        kw = {"run": powercfg} if powercfg else {}
+        self._plan_restored = powerplan.restore_leftover(self._out_dir, **kw)  # a crashed test's plan switch
 
     # ------------------------------------------------------------------ dependencies (real ones load lazily)
     def _elevation_problem(self) -> str | None:
@@ -153,6 +158,13 @@ class Api:
             except Exception:
                 continue
 
+    def _changes(self) -> list[dict]:
+        try:
+            from . import changelog
+            return changelog.load(self._out_dir)
+        except Exception:
+            return []
+
     def _snapshot(self) -> dict | None:
         """iRacing's graphics settings as they are on disk now."""
         try:
@@ -181,9 +193,30 @@ class Api:
             kw = {"snapshot": self._snapshot}
             if self._audit_parts:
                 kw.update(self._audit_parts)
-            return {"ok": True, **audit.run(**kw)}
+            r = audit.run(**kw)
+            self._record_settings(r, "you opened the audit")
+            return {"ok": True, **r}
         except Exception as e:
             return {"ok": False, "error": f"Couldn't audit the PC: {e}"}
+
+    def _record_settings(self, audit_result: dict | None = None, reason: str = "") -> None:
+        """Logs settings that changed since the last snapshot (see changelog)."""
+        try:
+            from . import audit, changelog
+            if audit_result is None:
+                kw = {"snapshot": self._snapshot, **(self._audit_parts or {})}
+                audit_result = audit.run(**kw)
+            changelog.record(self._out_dir, changelog.snapshot(audit_result), reason)
+        except Exception:
+            pass
+
+    def add_note(self, text) -> dict:
+        try:
+            from . import changelog
+            changelog.add_note(self._out_dir, text)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def _simhub_capture(self) -> bool | None:
         try:
@@ -201,7 +234,7 @@ class Api:
             key, problem = self._settings_state()
             v = dashboard.view(self._bench_root, focus, self._elevation_problem(), self._machine_line(),
                                current_key=key, settings_problem=problem,
-                               capture={"simhub": self._simhub_capture()})
+                               capture={"simhub": self._simhub_capture()}, changes=self._changes())
             from . import version_label
             v["version"] = version_label()
             v["backups"] = self.backups()
@@ -309,13 +342,34 @@ class Api:
                                                                                  or "nothing (no access?)")),
                                       revert=pauser.resume)]
             job.title = "Background apps: running vs paused"
+        elif test == "powerplan":
+            from . import powerplan
+            kw = {"run": self._powercfg} if self._powercfg else {}
+            try:
+                found, active = powerplan.plans(**kw)
+            except Exception as e:
+                return {"ok": False, "error": f"Couldn't read the power plans: {e}"}
+            other = powerplan.pick_other(found, active) if active else None
+            if not other:
+                return {"ok": False, "error": "There's no other power plan to compare with."}
+            sw = powerplan.Switcher(self._out_dir, **kw)
+            a, b = f"{found[active]} plan", f"{found[other]} plan"
+            variants = [bench.Variant(a),
+                        bench.Variant(b, description=f"The app switched Windows to {found[other]} and back.",
+                                      apply=lambda: sw.switch(other, active),
+                                      revert=lambda: self._log(job, "Power plan put back: " + (sw.restore() and
+                                                                                            found[active] or "?")))]
+            job.title = f"{b} vs {a}"
         elif test == "guided":
             a = (str(opts.get("a") or "").strip() or "A")[:60]
             b = (str(opts.get("b") or "").strip() or "B")[:60]
             if a == b:
                 return {"ok": False, "error": "A and B need different names."}
+            where = {"Windows": "Windows settings", "NVIDIA": "the NVIDIA app",
+                     "iRacing": "iRacing's graphics options"}.get(str(opts.get("where") or ""),
+                                                                 "iRacing, Windows or the NVIDIA app")
             variants = [bench.Variant(a, manual=True, apply=lambda: self._ask(
-                            job, f"Set up A: {a}", "The replay is paused. Change it in iRacing or the NVIDIA app, "
+                            job, f"Set up A: {a}", f"The replay is paused. Change it in {where}, "
                             "then press Done. Don't move the replay or the camera.")),
                         bench.Variant(b, manual=True, apply=lambda: self._ask(
                             job, f"Set up B: {b}", "The replay is paused. Change it, then press Done."))]
@@ -333,6 +387,7 @@ class Api:
 
         def run():
             try:
+                self._record_settings(reason="a test started")
                 bdir = run_bench(cfg, self._out_dir, driver, capture, log=lambda s: self._log(job, s), stop=job.stop,
                                  variants=variants)
                 s = dashboard.load_bundle(bdir) or {}
@@ -553,6 +608,12 @@ def main(out_dir: Path | None = None) -> bool:
                                    background_color="#111317", text_select=True)
     api._window = window
     api.start_update_check()
+    threading.Thread(target=api._record_settings, kwargs={"reason": "the app started"}, daemon=True).start()
+    try:
+        from . import simwatch
+        simwatch.start(api._out_dir)  # learns the sim's start-up command line for unattended restarts later
+    except Exception:
+        pass
     try:
         webview.start(gui="edgechromium" if sys.platform == "win32" else None, debug=bool(os.environ.get("IRO_DEBUG")))
     except Exception:

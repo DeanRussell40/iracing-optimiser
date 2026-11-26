@@ -86,7 +86,7 @@
    <button class="chip" data-show="" aria-pressed="true">All</button><button class="chip" data-show="attention" aria-pressed="false">Needs attention</button><button class="chip" data-show="test" aria-pressed="false">Test</button><button class="chip" data-show="fine" aria-pressed="false">Fine or info</button>
   </div>
   <div class="scroll"><table><thead><tr><th>Setting</th><th>Now</th><th>Verdict</th><th>Why</th><th></th></tr></thead><tbody id="au-rows"></tbody></table></div>
-  <p class="note">"Test" means it depends on your PC, so only a measurement can say. "Test this" starts an A/B test: the replay pauses, you change that one setting, and the app measures both.</p>
+  <p class="note">"Test" means it depends on your PC, so only a measurement can say. "Test automatically" switches the setting itself, measures both and puts yours back, even after a crash. "Test this" is for settings the app can't switch while iRacing runs yet: the replay pauses, you change that one setting, and the app measures both.</p>
  </div>
 </section>
 
@@ -97,7 +97,7 @@
   <div class="card"><h2>1% low per setup tested</h2><div class="fig"><svg id="chart" role="img" aria-label="1% low fps for each setup tested"></svg></div></div>
   <div class="card sum"><h2>Summary</h2><div id="summary"></div></div>
  </div>
- <div class="card"><div class="head"><h2>Tests</h2><button class="ghost" id="open-folder">Open results folder</button></div>
+ <div class="card"><div class="head"><h2>Tests, changes and notes</h2><div class="row"><button class="ghost" id="add-note">Add a note</button><button class="ghost" id="open-folder">Open results folder</button></div></div>
   <div class="scroll"><table><thead><tr><th>When</th><th>Test</th><th class="n">1% low (fps)</th><th class="n">Slowest 1% of frames</th><th>Verdict</th><th></th></tr></thead><tbody id="tests"></tbody></table></div>
  </div>
 </section>
