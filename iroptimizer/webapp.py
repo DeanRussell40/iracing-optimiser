@@ -610,6 +610,11 @@ def main(out_dir: Path | None = None) -> bool:
     api.start_update_check()
     threading.Thread(target=api._record_settings, kwargs={"reason": "the app started"}, daemon=True).start()
     try:
+        from . import simwatch
+        simwatch.start(api._out_dir)  # learns the sim's start-up command line for unattended restarts later
+    except Exception:
+        pass
+    try:
         webview.start(gui="edgechromium" if sys.platform == "win32" else None, debug=bool(os.environ.get("IRO_DEBUG")))
     except Exception:
         traceback.print_exc()
