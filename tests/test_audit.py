@@ -32,6 +32,7 @@ def by_name(items):
 def test_windows_items_read_values():
     w = by_name(audit.windows_items(run=fake_run, reg=fake_reg, timer=lambda: 0.5))
     assert w["Power plan"]["value"] == "Balanced" and w["Power plan"]["level"] == "test"
+    assert w["Power plan"]["test"] == {"a": "Balanced plan", "b": "High performance plan"}
     assert w["Core parking (minimum cores unparked)"]["value"] == "100%"
     assert w["Hardware-accelerated GPU scheduling"]["value"] == "On"
     assert w["Multiplane overlay (MPO)"]["value"] == "On (Windows default)"
@@ -54,7 +55,14 @@ def test_nvidia_items_prefer_the_iracing_profile_and_flag_shader_cache_off():
     assert n["Vertical sync"]["value"] == "Use the app setting (global)"
     assert n["G-SYNC mode"]["value"] == "Off (global)"
     assert n["Max frame rate"]["value"] == "Off (iRacing profile)"
+    fixed = by_name(audit.nvidia_items(read=lambda: {"global": {0x10A879CF: 4}, "app": {}}))
+    assert fixed["Monitor technology"]["value"] == "Fixed refresh (global)"
     assert n["Texture filtering quality"]["value"] == "Couldn't read"
+    nd = by_name(audit.nvidia_items(read=lambda: {"global": {}, "app": {}, "profile": "not found (NVAPI x)",
+                                                 "codes": {0x10835002: [-160, None], 0x00198FFF: [-5, None]}}))
+    assert nd["Max frame rate"]["value"] == "Driver default"
+    assert nd["Shader cache"]["value"] == "Couldn't read" and "-5" in nd["Shader cache"]["note"]
+    assert nd["iRacing driver profile"]["value"] == "Not found"
     off = by_name(audit.nvidia_items(read=lambda: {"global": {0x00198FFF: 0}, "app": {}}))
     assert off["Shader cache"]["level"] == "bad"
     err = audit.nvidia_items(read=lambda: {"error": "The NVIDIA driver's NVAPI isn't installed."})
@@ -63,7 +71,8 @@ def test_nvidia_items_prefer_the_iracing_profile_and_flag_shader_cache_off():
 
 def test_iracing_items_show_replay_differences():
     i = by_name(audit.iracing_items(SNAP))
-    assert i["MaxCarsToDraw"]["value"] == "40 (replay 20)" and i["MaxCarsToDraw"]["level"] == "warn"
+    assert i["MaxCarsToDraw"]["value"] == "40 race, 20 replay" and i["MaxCarsToDraw"]["level"] == "warn"
+    assert "Close iRacing, then press Read again" in i["Replay and race graphics differ"]["note"]
     assert i["DynamicShadowMaps"]["value"] == "1" and i["DynamicShadowMaps"]["level"] == "test"
     assert i["SSAO"]["test"] == {"a": "SSAO 1", "b": "SSAO lower"}
     assert audit.iracing_items(None)[0]["value"] == "Couldn't read"
@@ -71,7 +80,8 @@ def test_iracing_items_show_replay_differences():
 
 def test_run_counts_and_survives_a_failing_part():
     r = sample()
-    assert r["counts"]["warn"] == 1 and r["counts"]["bad"] == 0 and r["counts"]["test"] >= 5
+    assert r["counts"]["warn"] == 1 and r["counts"]["attention"] == 1 and r["counts"]["bad"] == 0
+    assert r["counts"]["test"] >= 5
     def boom():
         raise RuntimeError("x")
     r = audit.run(snapshot=lambda: SNAP, windows=boom, nvidia=lambda: [])

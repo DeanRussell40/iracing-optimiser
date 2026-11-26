@@ -74,8 +74,10 @@ def windows_items(run: Callable = _run, reg: Callable = _reg, timer: Callable | 
         out.append(_item(A, "Power plan", plan, "bad", "Power saver holds the processor back. Use Balanced or High "
                          "performance."))
     else:
+        other = "High performance" if plan == "Balanced" else "Balanced"
         out.append(_item(A, "Power plan", plan, "test", "On a Ryzen 7800X3D, Balanced normally performs the same "
-                         "as High performance. A test settles it.", {"a": "Balanced plan", "b": "High performance plan"}))
+                         "as High or Ultimate Performance, with less heat. A test settles it.",
+                         {"a": f"{plan} plan", "b": f"{other} plan"}))
     park = parse_ac_value(run(["powercfg", "/qh", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES"]))
     out.append(_item(A, "Core parking (minimum cores unparked)", None if park is None else f"{park}%",
                      "info", "100% means no cores are parked. On a single-CCD 7800X3D, parking rarely matters. "
@@ -160,7 +162,8 @@ def startup_apps(reg: Callable = _reg) -> str:
 # Setting ids and values from NVIDIA's public NvApiDriverSettings.h. An unknown value is shown raw, never guessed.
 NV_SETTINGS = {
     0x1194F158: ("G-SYNC mode", {0: "Off", 1: "Full screen only", 2: "Full screen and windowed"}),
-    0x10A879CF: ("G-SYNC for this app", {0: "Allowed", 1: "Forced off", 2: "Not allowed"}),
+    0x10A879CF: ("Monitor technology", {0: "G-SYNC", 1: "G-SYNC forced off", 2: "G-SYNC not allowed", 3: "ULMB",
+                                        4: "Fixed refresh"}),
     0x00A879CF: ("Vertical sync", {0x60925292: "Use the app setting", 0x08416747: "Off", 0x47814940: "On",
                                    0x18888888: "Fast", 0x32610244: "On (half refresh)", 0x71271021: "On (third refresh)",
                                    0x13245256: "On (quarter refresh)"}),
@@ -176,7 +179,7 @@ NV_SETTINGS = {
 }
 _NV_IDS = {"Initialize": 0x0150E828, "CreateSession": 0x0694D52E, "LoadSettings": 0x375DBD6B,
            "GetBaseProfile": 0xDA8466A0, "FindApplicationByName": 0xEEE566B2, "GetSetting": 0x73BF8338,
-           "DestroySession": 0xDAD9CFF8}
+           "DestroySession": 0xDAD9CFF8, "FindProfileByName": 0x7E4A9A0B}
 IRACING_EXE = "iRacingSim64DX11.exe"
 
 
@@ -201,8 +204,14 @@ def _wstr(s: str):
     return buf
 
 
+NV_NOT_SET = -160          # NVAPI_SETTING_NOT_FOUND: not set in this profile, so the driver default applies
+_APP_SIZES = {3: 20492, 2: 16392, 1: 12296}  # NVDRS_APPLICATION_V3/V2/V1
+IRACING_PROFILES = ("iRacing", "iRacing Simulator")
+
+
 def read_nvidia_profiles() -> dict:
-    """{"global": {id: value}, "app": {id: value}} or {"error": text}. Read only."""
+    """{"global": {id: value}, "app": {id: value}, "codes": {id: [global code, app code]}, "profile": text}
+    or {"error": text}. Read only."""
     if not WIN:
         return {"error": "Not on Windows."}
     try:
@@ -227,25 +236,45 @@ def read_nvidia_profiles() -> dict:
         try:
             fn("LoadSettings", ctypes.c_void_p)(sess)
             get = fn("GetSetting", ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_Setting))
+            codes: dict[int, list] = {sid: [None, None] for sid in NV_SETTINGS}
 
-            def read(profile) -> dict:
+            def read(profile, slot) -> dict:
                 vals = {}
                 for sid in NV_SETTINGS:
-                    s = _Setting()
-                    s.version = ctypes.sizeof(_Setting) | (1 << 16)
-                    if get(sess, profile, sid, ctypes.byref(s)) == 0:
-                        vals[sid] = int.from_bytes(bytes(s.current[:4]), "little")
+                    st = _Setting()
+                    st.version = ctypes.sizeof(_Setting) | (1 << 16)
+                    rc = get(sess, profile, sid, ctypes.byref(st))
+                    codes[sid][slot] = rc
+                    if rc == 0:
+                        vals[sid] = int.from_bytes(bytes(st.current[:4]), "little")
                 return vals
 
             base = ctypes.c_void_p()
             fn("GetBaseProfile", ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(sess, ctypes.byref(base))
-            out = {"global": read(base), "app": {}}
-            prof, app = ctypes.c_void_p(), _App()
-            app.version = ctypes.sizeof(_App) | (3 << 16)
+            out = {"global": read(base, 0), "app": {}, "codes": codes}
+            prof, tried = ctypes.c_void_p(), []
             find = fn("FindApplicationByName", ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
-                      ctypes.POINTER(_App))
-            if find(sess, _wstr(IRACING_EXE), ctypes.byref(prof), ctypes.byref(app)) == 0:
-                out["app"] = read(prof)
+                      ctypes.c_void_p)
+            found = None
+            for ver, size in _APP_SIZES.items():
+                buf = ctypes.create_string_buffer(32768)
+                ctypes.c_uint32.from_buffer(buf).value = size | (ver << 16)
+                rc = find(sess, _wstr(IRACING_EXE), ctypes.byref(prof), buf)
+                tried.append(f"app v{ver}: {rc}")
+                if rc == 0:
+                    found = f"found by {IRACING_EXE}"
+                    break
+            if not found:
+                byname = fn("FindProfileByName", ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
+                for name in IRACING_PROFILES:
+                    rc = byname(sess, _wstr(name), ctypes.byref(prof))
+                    tried.append(f"{name!r}: {rc}")
+                    if rc == 0:
+                        found = f"found by name ({name})"
+                        break
+            out["profile"] = found or "not found (NVAPI " + ", ".join(tried) + ")"
+            if found:
+                out["app"] = read(prof, 1)
             return out
         finally:
             fn("DestroySession", ctypes.c_void_p)(sess)
@@ -268,11 +297,21 @@ def nvidia_items(read: Callable = read_nvidia_profiles) -> list[dict]:
     if r.get("error"):
         return [_item(A, "Driver settings", r["error"], "info", "Without them the NVIDIA settings can't be audited.")]
     out = []
+    if r.get("profile"):
+        ok = r["profile"].startswith("found")
+        out.append(_item(A, "iRacing driver profile", "Found" if ok else "Not found", "info",
+                         "Per-game settings come from it, else from the global settings." if ok else
+                         "Only global settings could be read, so any setting made for iRacing alone isn't shown. "
+                         f"Details: {r['profile']}."))
     for sid, (name, _vals) in NV_SETTINGS.items():
         app, glob = r.get("app", {}).get(sid), r.get("global", {}).get(sid)
         v = app if app is not None else glob
         if v is None:
-            out.append(_item(A, name, None))
+            codes = [c for c in (r.get("codes") or {}).get(sid, []) if c is not None]
+            if codes and all(c == NV_NOT_SET for c in codes):
+                out.append(_item(A, name, "Driver default", "info", "Not set anywhere, so the driver's default applies."))
+            else:
+                out.append(_item(A, name, None, "info", f"NVAPI answered {codes}." if codes else ""))
             continue
         where = "iRacing profile" if app is not None else "global"
         val = f"{_nv_text(sid, v)} ({where})"
@@ -280,8 +319,10 @@ def nvidia_items(read: Callable = read_nvidia_profiles) -> list[dict]:
         if sid == 0x00198FFF and v == 0:
             level, note = "bad", "With the shader cache off, iRacing rebuilds shaders every session, which stutters."
         elif sid == 0x1194F158:
-            level, note, test = "test", ("G-SYNC smooths uneven frame times without V-Sync's tearing trade-off, and "
-                                         "your monitors support it."), {"a": "G-Sync off", "b": "G-Sync on"}
+            level, note, test = "test", ("G-SYNC smooths uneven frame times without V-Sync's tearing trade-off, on "
+                                         "monitors that support it."), {"a": "G-Sync off", "b": "G-Sync on"}
+        elif sid == 0x10A879CF and v == 4:
+            note = "With fixed refresh the monitors don't use G-SYNC, whatever G-SYNC mode says. The G-SYNC test covers both."
         elif sid == 0x0005F543:
             level, note, test = "test", "Changes latency and sometimes 1% lows. Worth one test.", \
                 {"a": "Low latency off", "b": "Low latency on"}
@@ -314,14 +355,22 @@ def iracing_items(snap: dict | None) -> list[dict]:
     diff = {d["key"].lower() for d in replay_mismatch(snap)}
     out = [_item(A, "Settings file", snap.get("renderer_file") or None, "info",
                  "The file iRacing reads its graphics from. It writes it when the sim closes.")]
+    if diff:
+        it = _item(A, "Replay and race graphics differ", f"{len(diff)} setting{'s' if len(diff) != 1 else ''}", "warn",
+                   "Tests run on a replay, so they'd measure the replay values. If you already made them the same in "
+                   "the sim, iRacing hasn't saved them yet: it writes them when the sim closes. Close iRacing, then "
+                   "press Read again.")
+        it["summary"] = True
+        out.append(it)
     for key in HEAVY:
         if key.lower() not in race:
             continue
         k, v = race[key.lower()]
         rv = rep.get(key.lower())
-        val = v.strip() + (f" (replay {rv.strip()})" if rv is not None and key.lower() in diff else "")
-        out.append(_item(A, k, val, "warn" if key.lower() in diff else "test",
-                         "Replay uses a different value, so tests won't match races." if key.lower() in diff else
+        differs = key.lower() in diff
+        val = f"{v.strip()} race, {rv.strip()} replay" if differs else v.strip()
+        out.append(_item(A, k, val, "warn" if differs else "test",
+                         "Replay uses a different value, so tests won't match races." if differs else
                          "A heavy option on triple screens. The graphics ladder tests it.",
                          {"a": f"{k} {v.strip()}", "b": f"{k} lower"}))
     return out
@@ -341,5 +390,7 @@ def run(snapshot: Callable | None = None, windows: Callable = windows_items, nvi
     except Exception:
         snap = None
     items += iracing_items(snap)
-    counts = {lv: sum(1 for i in items if i["level"] == lv) for lv in ("bad", "warn", "test")}
+    rows = [i for i in items if not i.get("summary")]
+    counts = {lv: sum(1 for i in rows if i["level"] == lv) for lv in ("bad", "warn", "test", "ok", "info")}
+    counts["attention"] = counts["bad"] + counts["warn"]
     return {"items": items, "counts": counts}
