@@ -190,6 +190,18 @@ def cmd_bench_report(args):
         webbrowser.open((Path(args.bundle) / "report.html").resolve().as_uri())
 
 
+def cmd_ui_check(args):
+    """Build check: the main window's files and libraries are inside the exe."""
+    from . import webapp
+    missing = [n for n in ("index.html", "app.css", "app.js") if not (webapp.WEBUI / n).is_file()]
+    if missing:
+        raise RuntimeError("UI files missing: " + ", ".join(missing))
+    import webview  # noqa: F401
+    if sys.platform == "win32":
+        import clr  # noqa: F401  (pythonnet: pywebview needs it for WebView2)
+    print("UI ok:", webapp.WEBUI)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="iroptimizer", description=_("Optimizador de gráficos y rendimiento para iRacing"))
     common = argparse.ArgumentParser(add_help=False)
@@ -269,10 +281,12 @@ def main(argv=None):
     br.add_argument("--no-browser", action="store_true")
     br.set_defaults(fn=cmd_bench_report)
 
+    sub.add_parser("ui-check", help="Check that the main window can load (used by the build)").set_defaults(fn=cmd_ui_check)
+
     args = p.parse_args(argv)
     try:
         args.fn(args)
-    except (FileNotFoundError, RuntimeError, ValueError) as e:
+    except (FileNotFoundError, RuntimeError, ValueError, ImportError) as e:
         print(_("Error: {e}", e=e), file=sys.stderr)
         sys.exit(1)
 

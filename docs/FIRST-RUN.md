@@ -25,7 +25,9 @@ When the app first finds your iRacing folder (`Documents\iRacing`), it saves a c
 
 ## 2. Allow frame timing (one time)
 
-1. Open the **Session monitor** tab and click **Grant permission…**.
+Skip this if you run the app as administrator (it offers to restart itself as administrator when iRacing runs that way).
+
+1. Click **Classic window** at the bottom left, open the **Session monitor** tab and click **Grant permission…**.
 2. Accept the Windows prompt. This adds you to the *Performance Log Users* group, which PresentMon needs.
 3. **Sign out of Windows and back in.** It doesn't take effect until you do.
 
@@ -43,12 +45,12 @@ A capped run can't show how much headroom the PC has. The bench marks capped run
 
 1. Start iRacing and open your replay. Pick a car with traffic around it and the **cockpit** camera.
 2. Move the replay to where the segment should start, and leave it there.
-3. Alt-Tab to the app, open **Replay bench** and click **Start bench**. The defaults are 1 warm-up plus 5 runs of 60 s, about 7 minutes.
-4. Don't touch the PC until the log says the report is ready. You can click **Stop** at any time.
+3. Alt-Tab to the app. On the **Tune** screen, press the orange button. It always shows the next useful test: first **Measure my PC**, then for example **Test background apps** or **Test G-Sync on vs off**. **Choose a different test** lists them all and the test length. The defaults are 1 warm-up plus 5 runs of 60 s per side, about 7 minutes for a measurement and 12 for an A/B test.
+4. Don't touch the PC unless the app asks you to switch something. It comes to the front and beeps when it does. You can click **Stop** at any time.
 
 ## 5. Read the result
 
-The report opens in your browser. The headline is one of these:
+**Found on your PC** and the **Results** screen update when a test ends. The **Report** button on Results opens the full report. Its headline is one of these:
 
 | Headline | Meaning | What to do |
 |---|---|---|

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>iRacing Optimiser</title>
+<link rel="stylesheet" href="app.css">
+</head><body>
+<div class="app">
+<nav class="rail" aria-label="Screens">
+ <div class="brand">iRacing <span>Optimiser</span></div>
+ <button class="nav" data-screen="tune" aria-current="true">Tune</button>
+ <button class="nav" data-screen="results" aria-current="false">Results</button>
+ <button class="nav" data-screen="backups" aria-current="false">Backups</button>
+ <div class="foot"><button class="link" id="classic">Classic window</button><span id="machine"></span><span id="version"></span></div>
+</nav>
+<main>
+<div id="alert" class="alert" hidden></div>
+
+<section id="tune">
+ <h1>Your PC, measured</h1>
+ <p class="sub" id="subtitle">Loading…</p>
+ <div class="read" id="readouts"></div>
+ <div class="tune">
+  <div class="card">
+   <h2>What matters most to you</h2>
+   <label for="focus" class="hint">Drag to choose. Moving it never re-runs tests: it picks from what was measured.</label>
+   <input type="range" id="focus" min="0" max="4" step="1" value="1" aria-describedby="pick">
+   <div class="ends"><span>Smoothness</span><span>Graphics</span></div>
+   <p id="pick"><b id="pick-label"></b><span id="pick-text"></span></p>
+   <p class="lock">Stability is locked: every option must hold its frame rate with no extra stutters.</p>
+  </div>
+
+  <div class="card start" id="start-card">
+   <div>
+    <h2>Find improvements</h2>
+    <ol class="steps"><li>Open a race replay in iRacing, pick the car and camera, and pause it where the test should start.</li>
+     <li>Turn off frame rate caps for a plain measurement.</li><li>Press the button, then leave the PC alone.</li></ol>
+   </div>
+   <div>
+    <button class="btn" id="go">Measure my PC</button>
+    <p class="why" id="go-why"></p>
+    <button class="link" id="other-tests" aria-expanded="false" aria-controls="tests-box">Choose a different test</button>
+   </div>
+   <div id="tests-box" class="tests-box" hidden>
+    <fieldset><legend>Test</legend>
+     <label class="opt"><input type="radio" name="test" value="repeat" checked> <span><b>Measure my PC</b> The same replay several times, changing nothing.</span></label>
+     <label class="opt"><input type="radio" name="test" value="background"> <span><b>Background apps: running vs paused</b> Finds busy apps, pauses them for half the runs and compares.</span></label>
+     <label class="opt"><input type="radio" name="test" value="guided"> <span><b>Something you switch yourself</b> The app tells you when to change it, for example G-Sync.</span></label>
+    </fieldset>
+    <div class="ab" id="ab-names" hidden>
+     <label>A, what you have now<input id="ab-a" value="G-Sync off" maxlength="60"></label>
+     <label>B, what to try<input id="ab-b" value="G-Sync on" maxlength="60"></label>
+    </div>
+    <details><summary>Test length</summary>
+     <div class="len">
+      <label>Seconds per run<input id="len-seconds" type="number" min="10" max="600" step="5" value="60"></label>
+      <label>Runs (per side)<input id="len-runs" type="number" min="3" max="20" value="5"></label>
+      <label>Warm-up runs<input id="len-warmup" type="number" min="0" max="3" value="1"></label>
+     </div>
+    </details>
+    <button class="btn small" id="go-chosen">Start this test</button>
+   </div>
+  </div>
+
+  <div class="card run" id="run-card" hidden>
+   <h2 id="run-title"></h2>
+   <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="run-bar"><i></i></div>
+   <p class="why" id="run-eta"></p>
+   <ul class="log" id="run-log" aria-live="polite"></ul>
+   <div class="row"><button class="ghost" id="run-stop">Stop</button><button class="ghost" id="run-close" hidden>Close</button></div>
+  </div>
+ </div>
+ <h2>Found on your PC</h2>
+ <ul class="find" id="finds"></ul>
+</section>
+
+<section id="results" hidden>
+ <h1 id="headline"></h1>
+ <p class="sub">Every number here comes from your PC on the replay you chose.</p>
+ <div class="res">
+  <div class="card"><h2>1% low per setup tested</h2><div class="fig"><svg id="chart" role="img" aria-label="1% low fps for each setup tested"></svg></div></div>
+  <div class="card sum"><h2>Summary</h2><div id="summary"></div></div>
+ </div>
+ <div class="card"><div class="head"><h2>Tests</h2><button class="ghost" id="open-folder">Open results folder</button></div>
+  <div class="scroll"><table><thead><tr><th>When</th><th>Test</th><th class="n">1% low (fps)</th><th class="n">Slowest 1% of frames</th><th>Verdict</th><th></th></tr></thead><tbody id="tests"></tbody></table></div>
+ </div>
+</section>
+
+<section id="backups" hidden>
+ <h1>Backups</h1>
+ <p class="sub" id="bk-sub">Your iRacing settings are saved before anything changes. One click puts them back.</p>
+ <div class="card"><div class="head"><h2>Saved settings</h2><button class="ghost" id="bk-now">Back up now</button></div>
+  <div class="scroll"><table><thead><tr><th>Saved</th><th>Why</th><th>Files</th><th></th></tr></thead><tbody id="bk-rows"></tbody></table></div>
+  <p class="note" id="bk-note"></p>
+ </div>
+</section>
+</main></div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+ <h2 id="dlg-title"></h2>
+ <div id="dlg-body"></div>
+ <div class="row end"><button class="ghost" id="dlg-cancel">Cancel</button><button class="btn small" id="dlg-ok">OK</button></div>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body></html>
