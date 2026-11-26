@@ -62,7 +62,7 @@ class Api:
                  sampler_factory: Callable | None = None, pauser_factory: Callable | None = None,
                  ini_dir: Callable[[], Path] | None = None, scan_seconds: float = 5.0, opener: Callable = _open,
                  bench_overrides: dict | None = None, updater=None, settings_snapshot: Callable | None = None,
-                 simhub_capture: Callable | None = None):
+                 simhub_capture: Callable | None = None, audit_parts: dict | None = None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
         self._window = None
@@ -85,6 +85,7 @@ class Api:
         self._updater = updater
         self._snapshot_fn = settings_snapshot
         self._simhub_fn = simhub_capture
+        self._audit_parts = audit_parts
         try:
             from . import presentmon
             presentmon.ensure_cached()  # a copy outside the temp folder, in case that folder disappears
@@ -172,6 +173,17 @@ class Api:
             return config_reader.settings_key(snap), config_reader.mismatch_text(config_reader.replay_mismatch(snap)) or None
         except Exception:
             return None, None
+
+    def audit(self) -> dict:
+        """Reads every Windows, NVIDIA and iRacing setting worth knowing. Read only."""
+        try:
+            from . import audit
+            kw = {"snapshot": self._snapshot}
+            if self._audit_parts:
+                kw.update(self._audit_parts)
+            return {"ok": True, **audit.run(**kw)}
+        except Exception as e:
+            return {"ok": False, "error": f"Couldn't audit the PC: {e}"}
 
     def _simhub_capture(self) -> bool | None:
         try:

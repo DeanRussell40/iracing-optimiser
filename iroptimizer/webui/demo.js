@@ -79,19 +79,22 @@ const VIEW = {
    "when": "26 Nov, 3:50 PM",
    "label": "Current settings",
    "value": 33,
-   "id": "20261126_155000"
+   "id": "20261126_155000",
+   "stale": false
   },
   {
    "when": "26 Nov, 4:14 PM",
    "label": "Background apps running",
    "value": 33,
-   "id": "20261126_161400"
+   "id": "20261126_161400",
+   "stale": false
   },
   {
    "when": "26 Nov, 4:14 PM",
    "label": "Background apps paused",
    "value": 71,
-   "id": "20261126_161400"
+   "id": "20261126_161400",
+   "stale": false
   }
  ],
  "tests": [
@@ -102,7 +105,8 @@ const VIEW = {
    "p99": "30.0 → 14.0 ms",
    "verdict": "Better",
    "level": "good",
-   "id": "20261126_161400"
+   "id": "20261126_161400",
+   "stale": false
   },
   {
    "when": "26 Nov, 3:50 PM",
@@ -111,7 +115,8 @@ const VIEW = {
    "p99": "30.0 ms",
    "verdict": "Repeatable",
    "level": "good",
-   "id": "20261126_155000"
+   "id": "20261126_155000",
+   "stale": false
   }
  ],
  "focus": {
@@ -120,6 +125,7 @@ const VIEW = {
   "pick": "No graphics trade-offs have been measured yet, so every position keeps your current settings."
  },
  "bundles": 2,
+ "stale_bundles": 0,
  "version": "demo",
  "focus_labels": [
   "Highest frame rate your PC holds, at the graphics level it needs",
@@ -148,6 +154,7 @@ const VIEW = {
   ]
  }
 };
+const AUDIT = {"items": [{"area": "Windows", "name": "Power plan", "value": "Balanced", "level": "test", "note": "On a Ryzen 7800X3D, Balanced normally performs the same as High performance. A test settles it.", "test": {"a": "Balanced plan", "b": "High performance plan"}}, {"area": "Windows", "name": "Core parking (minimum cores unparked)", "value": "100%", "level": "info", "note": "100% means no cores are parked. On a single-CCD 7800X3D, parking rarely matters. Shown for completeness.", "test": null}, {"area": "Windows", "name": "Game Mode", "value": "On", "level": "test", "note": "Game Mode lowers background work while a game runs. It usually helps or makes no difference.", "test": {"a": "Game Mode off", "b": "Game Mode on"}}, {"area": "Windows", "name": "Hardware-accelerated GPU scheduling", "value": "On", "level": "test", "note": "Results differ by driver; there is no general right answer. Changing it needs a Windows restart, so it needs a two-session test (coming next).", "test": null}, {"area": "Windows", "name": "Multiplane overlay (MPO)", "value": "On (Windows default)", "level": "test", "note": "MPO has caused flicker and stutter on some multi-monitor NVIDIA setups. Changing it needs a Windows restart, so it needs a two-session test (coming next).", "test": null}, {"area": "Windows", "name": "Game Bar background recording", "value": "Off", "level": "ok", "note": "Windows isn't recording the screen in the background.", "test": null}, {"area": "Windows", "name": "Optimizations for windowed games", "value": "On", "level": "info", "note": "Lets a borderless game like yours present frames like full screen, with lower latency. iRacing picks up a change only when it restarts, so this can't be tested on a paused replay.", "test": null}, {"area": "Windows", "name": "Memory integrity (Core isolation)", "value": "On", "level": "info", "note": "A security feature. It costs a few percent in some games. The app won't suggest turning off security. Shown so you know it's there.", "test": null}, {"area": "Windows", "name": "Timer resolution", "value": "1.00 ms", "level": "info", "note": "The current system timer. Games set it themselves while running, so tools that force it rarely change anything on Windows 11.", "test": null}, {"area": "Windows", "name": "Startup apps", "value": "None found", "level": "info", "note": "Apps that start with Windows. Busy ones show up in the background test.", "test": null}, {"area": "NVIDIA", "name": "G-SYNC mode", "value": "Off (global)", "level": "test", "note": "G-SYNC smooths uneven frame times without V-Sync's tearing trade-off, and your monitors support it.", "test": {"a": "G-Sync off", "b": "G-Sync on"}}, {"area": "NVIDIA", "name": "G-SYNC for this app", "value": "Couldn't read", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Vertical sync", "value": "Use the app setting (global)", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Max frame rate", "value": "Off (iRacing profile)", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Low latency mode", "value": "Ultra (iRacing profile)", "level": "test", "note": "Changes latency and sometimes 1% lows. Worth one test.", "test": {"a": "Low latency off", "b": "Low latency on"}}, {"area": "NVIDIA", "name": "Power management mode", "value": "Normal (adaptive) (global)", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Shader cache", "value": "On (global)", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Shader cache size", "value": "Couldn't read", "level": "info", "note": "", "test": null}, {"area": "NVIDIA", "name": "Texture filtering quality", "value": "Couldn't read", "level": "info", "note": "", "test": null}, {"area": "iRacing", "name": "Settings file", "value": "rendererDX11Monitor.ini", "level": "info", "note": "The file iRacing reads its graphics from. It writes it when the sim closes.", "test": null}, {"area": "iRacing", "name": "MaxCarsToDraw", "value": "40 (replay 20)", "level": "warn", "note": "Replay uses a different value, so tests won't match races.", "test": {"a": "MaxCarsToDraw 40", "b": "MaxCarsToDraw lower"}}, {"area": "iRacing", "name": "DynamicShadowMaps", "value": "1", "level": "test", "note": "A heavy option on triple screens. The graphics ladder tests it.", "test": {"a": "DynamicShadowMaps 1", "b": "DynamicShadowMaps lower"}}, {"area": "iRacing", "name": "SSAO", "value": "1", "level": "test", "note": "A heavy option on triple screens. The graphics ladder tests it.", "test": {"a": "SSAO 1", "b": "SSAO lower"}}], "counts": {"bad": 0, "warn": 1, "test": 8}};
 let job = null, t0 = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 window.DEMO_API = {
@@ -164,5 +171,6 @@ window.DEMO_API = {
   stop: async () => { job.state = "stopped"; return {ok: true}; },
   update_status: async () => ({available: false, state: "current"}), update_install: async () => ({ok: false}), open_classic: async () => ({ok: true}), open_report: async () => ({ok: true}), open_results_folder: async () => ({ok: true}),
   relaunch_admin: async () => ({ok: true}), backup_now: async () => ({ok: true}), restore: async () => ({ok: true}),
+  audit: async () => { await sleep(600); return {ok: true, ...AUDIT}; },
 };
 })();

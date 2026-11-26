@@ -8,6 +8,7 @@
 <nav class="rail" aria-label="Screens">
  <div class="brand">iRacing <span>Optimiser</span><small id="version-top"></small></div>
  <button class="nav" data-screen="tune" aria-current="true">Tune</button>
+ <button class="nav" data-screen="audit" aria-current="false">Audit</button>
  <button class="nav" data-screen="results" aria-current="false">Results</button>
  <button class="nav" data-screen="backups" aria-current="false">Backups</button>
  <div class="foot"><button class="link" id="classic">Classic window</button><span id="machine"></span><span id="version"></span></div>
@@ -72,6 +73,15 @@
  </div>
  <h2>Found on your PC</h2>
  <ul class="find" id="finds"></ul>
+</section>
+
+<section id="audit" hidden>
+ <h1>Audit my PC</h1>
+ <p class="sub" id="au-sub">Every Windows, NVIDIA and iRacing setting that can affect smoothness, as it is now. Nothing is changed.</p>
+ <div class="card"><div class="head"><h2>Current settings</h2><button class="ghost" id="au-refresh">Read again</button></div>
+  <div class="scroll"><table><thead><tr><th>Setting</th><th>Now</th><th>Verdict</th><th>Why</th><th></th></tr></thead><tbody id="au-rows"></tbody></table></div>
+  <p class="note">"Test" means it depends on your PC, so only a measurement can say. "Test this" starts an A/B test: the replay pauses, you change that one setting, and the app measures both.</p>
+ </div>
 </section>
 
 <section id="results" hidden>
