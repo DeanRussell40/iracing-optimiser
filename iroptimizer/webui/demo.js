@@ -153,7 +153,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 window.DEMO_API = {
   view: async () => ({...VIEW, job}),
   set_focus: async () => ({ok: true}),
-  scan_background: async () => { await sleep(1200); return {ok: true, apps: [{name: "SimHubWPF.exe", cores: 0.9}, {name: "simmixer.exe", cores: 0.35}]}; },
+  scan_background: async () => { await sleep(1200); return {ok: true, apps: [{name: "SimHubWPF.exe", cores: 0.9}, {name: "simmixer.exe", cores: 0.35}, {name: "pythonw.exe", cores: 0.06}]}; },
   start: async (test, o) => { t0 = Date.now(); job = {title: test === "guided" ? `${o.b} vs ${o.a}` : test === "background" ? "Background apps: running vs paused" : "Measure my PC", state: "running", logs: [], eta_s: 720}; return {ok: true, title: job.title, eta_min: 12}; },
   poll: async () => { if (!job) return {job: null}; const el = (Date.now() - t0) / 1000;
     const j = {...job, elapsed_s: el * 30, progress: Math.min(.99, el * 30 / 720), next: 0,

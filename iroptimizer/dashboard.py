@@ -304,7 +304,7 @@ def readouts(history: list[dict]) -> list[dict]:
         {"label": "1% low", "value": _fmt(m.get("low1_fps"), 0, " fps"), "note": delta("low1_fps")},
         {"label": "Stutters per minute", "value": _fmt(m.get("stutters_per_min"), 1),
          "note": f"was {st_first:.0f}" if st_first is not None and st_first >= 10 else f"was {st_first:.1f}" if st_first is not None and m is not first and
-         abs(st_first - (m.get("stutters_per_min") or 0)) >= 1 else ""},
+         abs(st_first - (m.get("stutters_per_min") or 0)) >= max(1.0, 0.1 * st_first) else ""},
         {"label": "Limit", "value": lim, "note": why},
     ]
 

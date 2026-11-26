@@ -147,8 +147,9 @@ async function startTest(test, extra = {}) {
   if (test === "background") {
     const r = startTest.scan;
     const go = await dialog({title: "Pause these apps for half the runs?",
-      html: "<ul>" + r.apps.map(a => `<li><label><input type="checkbox" checked value="${esc(a.name)}"> ${esc(a.name)} <span class="mute">(${a.cores} cores)</span></label></li>`).join("") + "</ul>" +
-        "<p>While paused they stop responding, for example SimHub dashes and wheel LEDs. They are resumed straight after each run and at the end, even if the app crashes.</p>",
+      // tick only apps that use real CPU: tiny ones can't explain stutter and pausing them only adds risk
+      html: "<ul>" + r.apps.map(a => `<li><label><input type="checkbox" ${a.cores >= Math.max(0.25, 0.2 * r.apps[0].cores) ? "checked" : ""} value="${esc(a.name)}"> ${esc(a.name)} <span class="mute">(${a.cores} cores)</span></label></li>`).join("") + "</ul>" +
+        "<p>Small ones are left unticked. Tick them only if you suspect them. While paused they stop responding, for example SimHub dashes and wheel LEDs. They are resumed straight after each run and at the end, even if the app crashes.</p>",
       ok: "Start the test", cancel: auto ? "Just measure" : "Cancel"});
     if (go === false && auto) return startTest("repeat", extra);
     if (!go) return;
