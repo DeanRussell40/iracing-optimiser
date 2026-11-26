@@ -11,6 +11,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--text);ov
 .rail{background:var(--rail);padding:20px 12px;display:flex;flex-direction:column;gap:4px;border-right:1px solid var(--line);position:sticky;top:0;height:100vh}
 .brand{font:700 21px/1.1 var(--display);padding:4px 10px 20px}
 .brand span{color:var(--go)}
+.brand small{display:block;font:500 12px/1.4 var(--text);color:var(--mute);margin-top:6px}
 .nav{all:unset;cursor:pointer;display:block;padding:11px 12px;border-radius:8px;color:var(--mute);font-weight:500;min-height:22px}
 .nav:hover{background:var(--panel);color:var(--ink)}
 .nav[aria-current=true]{background:var(--panel);color:var(--ink);box-shadow:inset 3px 0 0 var(--go)}

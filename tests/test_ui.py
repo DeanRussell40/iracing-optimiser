@@ -343,3 +343,21 @@ def test_presentmon_cached_outside_temp(tmp_path, monkeypatch):
     import shutil
     shutil.rmtree(tmp_path / "_MEI1")  # the parent copy exits and its temp folder goes
     assert presentmon.find_exe() == dst
+
+
+# ---------------------------------------------------------------- version
+
+def test_version_label_and_tag_check(tmp_path, monkeypatch):
+    import iroptimizer, subprocess, sys as _sys
+    assert iroptimizer.version_label().startswith(iroptimizer.__version__)
+    monkeypatch.setattr(iroptimizer, "BUILD", {"number": "52", "commit": "3de78ccd906d", "date": "26 Nov 2026"})
+    assert iroptimizer.version_label() == f"{iroptimizer.__version__} · build 52 (3de78cc), 26 Nov 2026"
+    script = Path(__file__).resolve().parents[1] / "packaging" / "write_build_info.py"
+    bad = subprocess.run([_sys.executable, str(script)], env={**__import__("os").environ, "GITHUB_REF": "refs/tags/v0.0.1"},
+                         capture_output=True, text=True)
+    assert bad.returncode != 0 and "doesn't match" in bad.stderr
+    assert "0.0.1" not in iroptimizer.__version__
+
+
+def test_view_reports_version(tmp_path):
+    assert make_api(tmp_path).view()["version"].startswith("0.")

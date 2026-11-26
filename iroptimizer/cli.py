@@ -199,7 +199,8 @@ def cmd_ui_check(args):
     import webview  # noqa: F401
     if sys.platform == "win32":
         import clr  # noqa: F401  (pythonnet: pywebview needs it for WebView2)
-    print("UI ok:", webapp.WEBUI)
+    from . import version_label
+    print("UI ok:", webapp.WEBUI, "| version", version_label())
 
 
 def main(argv=None):

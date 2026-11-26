@@ -50,6 +50,8 @@ function render(v) {
   if (v.error) { toast(v.error); return; }
   $("machine").textContent = v.machine || "";
   $("version").textContent = v.version ? "Version " + v.version : "";
+  $("version-top").textContent = v.version ? "v" + v.version.split(" ")[0] : "";
+  $("version-top").title = v.version || "";
   $("subtitle").textContent = v.subtitle;
   $("readouts").innerHTML = v.readouts.map(r =>
     `<div><small>${esc(r.label)}</small><b>${esc(r.value)}</b><em class="${r.label === "Limit" ? "mute" : ""}">${esc(r.note)}</em></div>`).join("");
