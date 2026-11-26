@@ -68,7 +68,9 @@ function renderAudit() {
     const head = `<tr class="group"><th colspan="5"><button class="fold" data-fold="${esc(a)}" aria-expanded="${!shut}">${shut ? "▸" : "▾"} ${esc(a)} <span class="mute">${plural(its.filter(i => !i.summary).length, "setting")}${att ? `, ${att} need attention` : ""}</span></button></th></tr>`;
     return head + (shut ? "" : its.map(i => {
       const [cls, word] = LV[i.level] || LV.info;
-      const btn = i.test ? `<button class="ghost" data-action="test:guided:${esc(i.test.a)}:${esc(i.test.b)}">Test this</button>` : "";
+      const btn = !i.test ? "" : i.test.auto
+        ? `<button class="btn small" data-action="test:${esc(i.test.auto)}">${esc(i.test.label || "Test automatically")}</button>`
+        : `<button class="ghost" data-action="test:guided:${esc(i.test.a)}:${esc(i.test.b)}:${esc(i.area)}">Test this</button>`;
       return `<tr${i.summary ? ' class="summary"' : ""}><td>${esc(i.name)}</td><td>${esc(i.value)}</td><td><span class="tag ${cls}">${word}</span></td><td class="why">${esc(i.note)}</td><td class="n">${btn}</td></tr>`;
     }).join(""));
   }).join("") : `<tr><td colspan="5" class="empty">Nothing matches these filters.</td></tr>`;
@@ -103,8 +105,9 @@ function render(v) {
   // results
   $("headline").textContent = v.headline;
   $("summary").innerHTML = v.summary.map(p => `<p>${esc(p)}</p>`).join("");
-  $("tests").innerHTML = v.tests.length ? v.tests.map(t =>
-    `<tr${t.stale ? ' class="stale"' : ""}><td class="nowrap">${esc(t.when)}</td><td>${esc(t.test)}${t.stale ? ' <span class="tag info">Other settings</span>' : ""}</td><td class="n">${esc(t.low1)}</td><td class="n">${esc(t.p99)}</td>` +
+  $("tests").innerHTML = v.tests.length ? v.tests.map(t => t.kind && t.kind !== "test"
+    ? `<tr class="event ${esc(t.kind)}"><td class="nowrap">${esc(t.when)}</td><td colspan="5"><span class="tag ${t.kind === "note" ? "info" : "warn"}">${esc(t.title)}</span> ${esc(t.text)}</td></tr>`
+    : `<tr${t.stale ? ' class="stale"' : ""}><td class="nowrap">${esc(t.when)}</td><td>${esc(t.test)}${t.stale ? ' <span class="tag info">Other settings</span>' : ""}</td><td class="n">${esc(t.low1)}</td><td class="n">${esc(t.p99)}</td>` +
     `<td><span class="tag ${esc(t.level)}">${esc(t.verdict)}</span></td>` +
     `<td class="n"><button class="ghost" data-report="${esc(t.id)}">Report</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="empty">No tests yet.</td></tr>`;
@@ -295,6 +298,12 @@ function wire() {
   });
   $("open-folder").addEventListener("click", () => call("open_results_folder"));
   $("au-refresh").addEventListener("click", loadAudit);
+  $("add-note").addEventListener("click", async () => {
+    const ok = await dialog({title: "Add a note", html: `<p>For changes the app can't see, like SimHub screen capture off, a new cable or a driver update. It goes on the timeline between your tests.</p><textarea id="note-text" rows="4" maxlength="1000"></textarea>`, ok: "Add note"});
+    if (!ok) return;
+    const r = await call("add_note", $("note-text").value);
+    r.ok ? (toast("Note added.", true), refresh()) : toast(r.error || "Couldn't add the note.");
+  });
   document.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
     const k = "area" in b.dataset ? "area" : "show";
     AU[k] = b.dataset[k];
@@ -317,9 +326,9 @@ function wire() {
       const id = a.dataset.action;
       if (id === "relaunch_admin") relaunch();
       else if (id.startsWith("test:")) {
-        const [, test, A, B] = id.split(":");
+        const [, test, A, B, W] = id.split(":");
         if (screen !== "tune") show("tune");
-        startTest(test, test === "guided" ? {a: A, b: B} : {});
+        startTest(test, test === "guided" ? {a: A, b: B, where: W} : {});
       }
     } else if (rep) {
       const r = await call("open_report", rep.dataset.report);

@@ -76,8 +76,9 @@ def windows_items(run: Callable = _run, reg: Callable = _reg, timer: Callable | 
     else:
         other = "High performance" if plan == "Balanced" else "Balanced"
         out.append(_item(A, "Power plan", plan, "test", "On a Ryzen 7800X3D, Balanced normally performs the same "
-                         "as High or Ultimate Performance, with less heat. A test settles it.",
-                         {"a": f"{plan} plan", "b": f"{other} plan"}))
+                         "as High or Ultimate Performance, with less heat. The app can test this by itself: it "
+                         "switches the plan, measures both and puts yours back.",
+                         {"auto": "powerplan", "label": "Test automatically"}))
     park = parse_ac_value(run(["powercfg", "/qh", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES"]))
     out.append(_item(A, "Core parking (minimum cores unparked)", None if park is None else f"{park}%",
                      "info", "100% means no cores are parked. On a single-CCD 7800X3D, parking rarely matters. "

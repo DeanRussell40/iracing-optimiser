@@ -281,7 +281,7 @@ def tests_table(history: list[dict]) -> list[dict]:
                          "p99": _fmt(m.get("frametime_p99_ms"), 1, " ms"),
                          "verdict": {"pass": "Repeatable", "fail": "Too noisy", "capped": "Capped"}.get(v, v.title()),
                          "level": {"pass": "good", "fail": "warn", "capped": "warn"}.get(v, "info"), "id": b["id"],
-                         "stale": bool(b.get("stale"))})
+                         "stale": bool(b.get("stale")), "kind": "test", "t": b["created"]})
             continue
         for c in b["comparisons"]:
             mb = b["per_variant"].get(c["variant"], {})
@@ -291,7 +291,7 @@ def tests_table(history: list[dict]) -> list[dict]:
                          "p99": f"{_fmt(ma.get('frametime_p99_ms'), 1)} → {_fmt(mb.get('frametime_p99_ms'), 1)} ms",
                          "verdict": c["verdict"].title() if c["verdict"] != "same" else "No difference",
                          "level": {"better": "good", "worse": "bad", "mixed": "warn"}.get(c["verdict"], "info"),
-                         "id": b["id"], "stale": bool(b.get("stale"))})
+                         "id": b["id"], "stale": bool(b.get("stale")), "kind": "test", "t": b["created"]})
     return rows
 
 
@@ -354,8 +354,30 @@ def _settings_findings(history: list[dict], current: list[dict], settings_proble
     return out
 
 
+def timeline(tests: list[dict], changes: list[dict]) -> list[dict]:
+    """Tests, setting changes and notes, newest first, so each change sits between the tests before and after it."""
+    from .changelog import describe
+    ev = [{"kind": e["kind"], "t": e["t"], "when": _when(e["t"]),
+           "title": "Note" if e["kind"] == "note" else "Settings changed", "text": describe(e)} for e in changes]
+    # newest first; events logged in the same second keep their logged order (latest on top)
+    order = {id(r): n for n, r in enumerate(ev)}
+    return sorted(tests + ev, key=lambda r: (r.get("t") or "", order.get(id(r), -1)), reverse=True)
+
+
+def _change_finding(current: list[dict], changes: list[dict]) -> dict | None:
+    last_t = current[-1]["created"] if current else ""
+    after = [e for e in changes if e["kind"] == "change" and e["t"] > last_t]
+    if not current or not after:
+        return None
+    from .changelog import describe
+    return {"level": "info", "title": "Settings changed since your last test",
+            "detail": " ".join(describe(e) + "." for e in after[-3:]) + " Measure again to see what it did.",
+            "action": {"id": "test:repeat", "label": "Measure again"}}
+
+
 def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None, machine: str = "",
-         current_key: str | None = None, settings_problem: str | None = None, capture: dict | None = None) -> dict:
+         current_key: str | None = None, settings_problem: str | None = None, capture: dict | None = None,
+         changes: list[dict] | None = None) -> dict:
     """current_key: fingerprint of the graphics settings on disk now. Only tests measured on those settings feed the
     readouts, findings, summary and next step; the rest stay in the chart and table, marked stale."""
     from .capture import capture_apps
@@ -389,6 +411,9 @@ def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None,
         fs = [f for f in fs if f["title"] != "Nothing measured yet"]
     at = 1 if elevation_problem else 0  # right after the "can't control iRacing" problem, which blocks everything
     fs[at:at] = _settings_findings(history, current, settings_problem, capture)
+    cf = _change_finding(current, changes or [])
+    if cf:
+        fs.insert(at, cf)
     return {
         "machine": machine,
         "subtitle": sub or "No measurements yet",
@@ -398,7 +423,7 @@ def view(bench_root: Path, focus: int = 1, elevation_problem: str | None = None,
         "headline": head,
         "summary": paras,
         "chart": chart(history),
-        "tests": tests_table(history),
+        "tests": timeline(tests_table(history), changes or []),
         "focus": focus_text(focus, current),
         "bundles": len(current),
         "stale_bundles": len(history) - len(current),
