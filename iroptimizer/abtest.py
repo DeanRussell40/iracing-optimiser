@@ -15,6 +15,10 @@ from statistics import median
 
 MIN_EFFECT_PCT = 3.0
 
+# What decides a verdict: what you feel. Pacing and average FPS are reported but never decide on their own: a
+# 0.2 ms pacing change with the same 1% lows and stutters is not something anyone can feel.
+PRIMARY_KEYS = ("frametime_p99_ms", "low1_fps", "stutters_per_min")
+
 # (key, label, lower_is_better) in order of importance for smoothness
 COMPARE_KEYS = (
     ("frametime_p99_ms", "Frame time p99", True),
@@ -54,7 +58,7 @@ def compare(baseline: list[dict], other: list[dict], base_name: str = "A", other
             worse = -improved > noise and sep_worse
         out["metrics"][key] = {"label": label, "a": ma, "b": mb, "delta_pct": delta_pct,
                                "result": "better" if better else "worse" if worse else "same"}
-    res = [m["result"] for k, m in out["metrics"].items() if k != "avg_fps"]
+    res = [m["result"] for k, m in out["metrics"].items() if k in PRIMARY_KEYS]
     if "worse" in res and "better" in res:
         verdict = "mixed"
     elif "better" in res:
@@ -72,11 +76,11 @@ def _verdict_text(c: dict, b: str, a: str) -> str:
     m = c["metrics"]
     parts = []
     if "low1_fps" in m:
-        parts.append(f"1% low {m['low1_fps']['a']:.0f} → {m['low1_fps']['b']:.0f} fps")
+        parts.append(f"1% low {m['low1_fps']['a']:.0f} to {m['low1_fps']['b']:.0f} fps")
     if "frametime_p99_ms" in m:
-        parts.append(f"p99 {m['frametime_p99_ms']['a']:.1f} → {m['frametime_p99_ms']['b']:.1f} ms")
+        parts.append(f"p99 {m['frametime_p99_ms']['a']:.1f} to {m['frametime_p99_ms']['b']:.1f} ms")
     if "stutters_per_min" in m:
-        parts.append(f"stutters {m['stutters_per_min']['a']:.1f} → {m['stutters_per_min']['b']:.1f}/min")
+        parts.append(f"stutters {m['stutters_per_min']['a']:.1f} to {m['stutters_per_min']['b']:.1f}/min")
     nums = "; ".join(parts)
     v = c["verdict"]
     if v == "better":
@@ -85,7 +89,7 @@ def _verdict_text(c: dict, b: str, a: str) -> str:
         return f"{b} is worse than {a}: {nums}."
     if v == "mixed":
         return f"{b} is better on some measures and worse on others: {nums}."
-    return f"No measurable difference between {b} and {a} (differences are within run-to-run noise): {nums}."
+    return f"No meaningful difference between {b} and {a} (differences are within run-to-run noise): {nums}."
 
 
 # ---------------------------------------------------------------------------- FPS cap prediction

@@ -334,11 +334,19 @@ class BackgroundSampler:
                 seen[name] = seen.get(name, 0) + c
         return seen
 
+    @staticmethod
+    def _sys() -> dict:
+        """Whole-PC CPU, plus DPC and interrupt time (Windows): high values point at a driver, not an app."""
+        x = psutil.cpu_times_percent(interval=None)
+        return {"cpu_pct": round(100 - x.idle, 1), "dpc_pct": getattr(x, "dpc", None),
+                "interrupt_pct": getattr(x, "interrupt", None)}
+
     def _loop(self):
         self._tick()
+        self._sys()  # primes the counters
         while not self._stop.wait(self.interval_s):
             try:
-                self.samples.append({"t": time.time(), "procs": self._tick()})
+                self.samples.append({"t": time.time(), "procs": self._tick(), "sys": self._sys()})
             except Exception:
                 pass
 

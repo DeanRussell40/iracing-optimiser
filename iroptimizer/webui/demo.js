@@ -35,7 +35,7 @@ const VIEW = {
   {
    "level": "good",
    "title": "Background apps were costing you smoothness",
-   "detail": "Background apps paused is better than Background apps running: 1% low 33 → 71 fps. Apps paused: SimHubWPF.exe, simmixer.exe.",
+   "detail": "Background apps paused is better than Background apps running: 1% low 33 to 71 fps. Apps paused: SimHubWPF.exe, simmixer.exe.",
    "action": null
   },
   {

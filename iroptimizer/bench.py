@@ -384,7 +384,7 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
         "background_samples": getattr(bg, "samples", []),
         "fingerprint": fp,
     }
-    (bdir / "bench.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    (bdir / "bench.json").write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
 
     if raw_csv.is_file():
         frames, _info = framelib.load(raw_csv, t0=meta["capture_t0"])
@@ -411,7 +411,7 @@ def _gpu_in(samples: list[dict], t0: float, t1: float) -> dict:
 
 def analyze_bundle(bdir: Path) -> dict:
     """(Re)analyses a bench bundle. Writes summary.json and report.html and returns the summary."""
-    from . import abtest, winsys
+    from . import abtest, stutters, winsys
     bdir = Path(bdir)
     meta = json.loads((bdir / "bench.json").read_text(encoding="utf-8"))
     src = bdir / "frames.csv.gz"
@@ -420,6 +420,7 @@ def analyze_bundle(bdir: Path) -> dict:
     all_frames, info = framelib.load(src, t0=meta.get("capture_t0")) if src.is_file() else ([], {"columns": {}})
     vnames = [v["name"] for v in meta.get("variants") or [{"name": "Current settings"}]]
     runs = []
+    events = []
     measured: dict[str, list] = {n: [] for n in vnames}
     bgs = meta.get("background_samples") or []
     for w in meta["windows"]:
@@ -433,6 +434,9 @@ def analyze_bundle(bdir: Path) -> dict:
         runs.append({"window": w, "metrics": m, "background": bg_rows})
         if not w["warmup"] and w["valid"] and m:
             measured.setdefault(w["variant"], []).extend(fr)
+            for i in metrics.stutter_indices([f.frametime for f in fr]):
+                events.append({"t": fr[i].t, "ms": round(fr[i].frametime, 1), "variant": w["variant"],
+                               "run": w["index"] + 1, "at_s": round(fr[i].t - w["t_start"], 1)})
     per_variant = {n: [r["metrics"] for r in runs if r["window"]["variant"] == n and not r["window"]["warmup"]
                        and r["window"]["valid"] and r["metrics"]] for n in vnames}
     base = vnames[0]
@@ -460,13 +464,16 @@ def analyze_bundle(bdir: Path) -> dict:
         "caps": caps,
         "background": bg_all,
         "suspects": winsys.suspects(bg_all),
+        "stutter_attribution": stutters.attribute(
+            events, bgs, *(lambda ws: (min(ws), max(ws)) if ws else (None, None))(
+                [w["t_start"] for w in meta["windows"]] + [w["t_end"] for w in meta["windows"]])),
         "present_mode": metrics.present_mode_summary(base_frames),
         "columns": info.get("columns"),
         "surface": surf,
         "display": fp.get("hardware", {}).get("display"),
         "gpus": fp.get("hardware", {}).get("gpus"),
     }
-    (bdir / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    (bdir / "summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
     (bdir / "report.html").write_text(render_report(summary), encoding="utf-8")
     return summary
 
@@ -503,6 +510,7 @@ RUN_COLS = (("avg_fps", "Avg FPS", 0), ("frametime_p50_ms", "Median ms", 2), ("f
 
 
 def render_report(s: dict) -> str:
+    from . import abtest
     e = lambda x: html.escape(str(x))
     rep, pm = s["repeatability"], s["present_mode"]
     colour = {"pass": "#1e8449", "fail": "#c0392b", "capped": "#c0392b"}.get(rep.get("verdict"), "#b9770e")
@@ -527,9 +535,9 @@ def render_report(s: dict) -> str:
     ab = ""
     for c in s.get("comparisons") or []:
         vc = {"better": "#1e8449", "worse": "#c0392b", "mixed": "#b9770e"}.get(c["verdict"], "#444")
-        mrows = "".join(f"<tr><td>{e(m['label'])}</td><td>{_f(m['a'], 2)}</td><td>{_f(m['b'], 2)}</td>"
+        mrows = "".join(f"<tr><td>{e(m['label'])}{'' if k in abtest.PRIMARY_KEYS else ' (info only)'}</td><td>{_f(m['a'], 2)}</td><td>{_f(m['b'], 2)}</td>"
                         f"<td>{_f(m['delta_pct'])}{'%' if m['delta_pct'] is not None else ''}</td><td>{e(m['result'])}</td></tr>"
-                        for m in c["metrics"].values())
+                        for k, m in c["metrics"].items())
         ab += (f"<p style='font-size:17px;color:{vc}'><b>{e(c['verdict_text'])}</b></p><table><tr><th>Metric</th>"
                f"<th>{e(c['baseline'])}</th><th>{e(c['variant'])}</th><th>Change</th><th>Result</th></tr>{mrows}</table>")
     ab_html = f"<h2>A/B result</h2>{ab}" if ab else ""
@@ -571,6 +579,17 @@ def render_report(s: dict) -> str:
                 "they cost.</p>" if sus else "<p>No busy background apps found.</p>")
         bg_html = (f"<h2>Background apps while the replay ran</h2>{lead}<table><tr><th>Process</th><th>Avg cores</th>"
                    f"<th>Peak cores</th><th>Can be paused</th></tr>{brow}</table>")
+    sa = s.get("stutter_attribution") or {}
+    st_html = ""
+    if sa.get("count"):
+        tops = lambda ev: ", ".join(f"{t['name']} {t['cores']}" for t in ev.get("top", []))  # noqa: E731
+        erow = "".join(
+            f"<tr><td>{e(ev.get('variant', ''))} run {ev.get('run', '')}</td><td>{ev.get('at_s', '')} s</td>"
+            f"<td>{ev.get('ms', '')} ms</td><td>{e(tops(ev))}</td>"
+            f"<td>{_f(ev.get('driver_pct'))}%</td><td>{_f(ev.get('cpu_pct'), 0)}%</td></tr>" for ev in sa.get("events", []))
+        st_html = (f"<h2>What was busy during stutters</h2><p><b>{e(sa.get('text', ''))}</b></p>"
+                   f"<table><tr><th>Run</th><th>When</th><th>Frame</th><th>Busiest apps (cores)</th>"
+                   f"<th>Driver time</th><th>Whole CPU</th></tr>{erow}</table>")
     cols = s.get("columns") or {}
     missing = [k for k in ("present_mode", "display_change", "until_displayed", "display_latency") if not cols.get(k)]
     col_note = (f"<p class=m>Columns not in this PresentMon log: {', '.join(missing)}.</p>" if missing else "")
@@ -587,7 +606,7 @@ td:first-child,th:first-child{{text-align:left}}.m{{color:#666}}h2{{margin-top:2
 <h2>Is the measurement repeatable?</h2>
 <p style="font-size:17px;color:{colour}"><b>{e(rep.get('verdict_text', ''))}</b></p>
 <table><tr><th>Metric</th><th>Median</th><th>Range</th><th>Spread</th><th>Steady drift</th></tr>{spread}</table>
-{bg_html}{cap_html}
+{st_html}{bg_html}{cap_html}
 <h2>Present path and tearing</h2>{pm_html}{col_note}
 <h2>Every run</h2>
 <table><tr><th></th>{head}<th>Note</th></tr>{''.join(rows)}</table>

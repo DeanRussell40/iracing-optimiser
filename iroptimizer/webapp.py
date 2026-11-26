@@ -127,8 +127,26 @@ class Api:
             return {}
 
     # ------------------------------------------------------------------ state
+    def _reanalyse_old(self) -> None:
+        """Bundles analysed by an older build lack newer results (stutter attribution, current verdict rules).
+        Re-analysing from the saved frames brings them up to date, once."""
+        if getattr(self, "_reanalysed", False):
+            return
+        self._reanalysed = True
+        from . import bench
+        if not self._bench_root.is_dir():
+            return
+        for d in self._bench_root.iterdir():
+            try:
+                sj = d / "summary.json"
+                if (d / "bench.json").is_file() and (not sj.is_file() or b'"stutter_attribution"' not in sj.read_bytes()):
+                    bench.analyze_bundle(d)
+            except Exception:
+                continue
+
     def view(self) -> dict:
         try:
+            self._reanalyse_old()
             focus = int(self._settings().get("focus", 1))
             v = dashboard.view(self._bench_root, focus, self._elevation_problem(), self._machine_line())
             v["version"] = __version__
