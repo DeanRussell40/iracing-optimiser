@@ -174,12 +174,36 @@ def elevation_mismatch() -> str | None:
     return None
 
 
+def child_env(base: dict | None = None) -> dict:
+    """Environment for starting another copy of this exe.
+
+    A PyInstaller one-file exe unpacks itself to a temp _MEI folder and tells its own child processes about it
+    through _PYI*/_MEIPASS2 variables. A new copy that inherits them reuses this copy's folder, which is deleted
+    when this copy exits: tools/PresentMon.exe vanished after "Update and restart". Strip them and ask the
+    bootloader for a fresh start (PyInstaller 6.9+)."""
+    env = {k: v for k, v in (base if base is not None else os.environ).items()
+           if not (k.upper().startswith("_PYI") or k.upper() == "_MEIPASS2")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def prepare_env_for_shell_launch() -> None:
+    """ShellExecute (used for "run as administrator") passes our own environment on, so clean it in place.
+    Only call this right before this copy hands over to a new one."""
+    clean = child_env()
+    for k in list(os.environ):
+        if k not in clean:
+            del os.environ[k]
+    os.environ.update(clean)
+
+
 def relaunch_as_admin(args: list[str] | None = None) -> bool:
     """Starts a new elevated copy of this app (UAC prompt). Returns whether it was launched."""
     if not is_windows():
         return False
     import ctypes
     import subprocess
+    prepare_env_for_shell_launch()
     exe = sys.executable
     params = subprocess.list2cmdline(args or []) if getattr(sys, "frozen", False) else \
         subprocess.list2cmdline([os.path.abspath(sys.argv[0]), *(args or [])])
@@ -334,11 +358,19 @@ class BackgroundSampler:
                 seen[name] = seen.get(name, 0) + c
         return seen
 
+    @staticmethod
+    def _sys() -> dict:
+        """Whole-PC CPU, plus DPC and interrupt time (Windows): high values point at a driver, not an app."""
+        x = psutil.cpu_times_percent(interval=None)
+        return {"cpu_pct": round(100 - x.idle, 1), "dpc_pct": getattr(x, "dpc", None),
+                "interrupt_pct": getattr(x, "interrupt", None)}
+
     def _loop(self):
         self._tick()
+        self._sys()  # primes the counters
         while not self._stop.wait(self.interval_s):
             try:
-                self.samples.append({"t": time.time(), "procs": self._tick()})
+                self.samples.append({"t": time.time(), "procs": self._tick(), "sys": self._sys()})
             except Exception:
                 pass
 

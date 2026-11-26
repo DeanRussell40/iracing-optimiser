@@ -93,16 +93,21 @@ def present_mode_summary(frames: list[Frame]) -> dict:
     }
 
 
-def count_stutters(fts: list[float]) -> int:
+def stutter_indices(fts: list[float]) -> list[int]:
+    """Frames over 2x the recent median and at least 8 ms longer than it."""
     win: deque = deque(maxlen=60)
-    n = 0
-    for ft in fts:
+    out = []
+    for i, ft in enumerate(fts):
         if len(win) >= 30:
             med = median(win)
             if ft > 2 * med and ft - med > 8:
-                n += 1
+                out.append(i)
         win.append(ft)
-    return n
+    return out
+
+
+def count_stutters(fts: list[float]) -> int:
+    return len(stutter_indices(fts))
 
 
 def detect_cap(fts_sorted: list[float], gpu_busy_p50: float | None) -> float | None:

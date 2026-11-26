@@ -37,7 +37,7 @@ def test_compare_detects_real_improvement():
     c = abtest.compare(a, b, "SimHub running", "SimHub paused")
     assert c["verdict"] == "better"
     assert c["metrics"]["stutters_per_min"]["result"] == "better"
-    assert "33 → 71" in c["verdict_text"]
+    assert "33 to 71" in c["verdict_text"]
 
 
 def test_compare_noise_is_same():
@@ -178,6 +178,8 @@ def test_ab_run_end_to_end(tmp_path):
     assert s["comparisons"][0]["variant"] == "Background apps paused"
     assert {r["window"]["variant"] for r in s["runs"]} == {v.name for v in vs}
     assert s["caps"]["available"]
+    assert s["stutter_attribution"]["count"] == 0
+    assert (bdir / "summary.json").read_bytes().isascii()  # readable in any Windows tool, whatever its code page
     html = (bdir / "report.html").read_text(encoding="utf-8")
     assert "A/B result" in html and "7680×1440" in html
 
@@ -210,3 +212,64 @@ def test_helpers_belong_to_their_owner():
 
 def test_pauser_never_pauses_helpers_by_name(tmp_path):
     assert winsys.ProcessPauser(tmp_path).pause(["msedgewebview2.exe", "conhost.exe"]) == []
+
+
+# ---------------------------------------------------------------- verdicts only on what you can feel
+
+def test_pacing_alone_never_wins():
+    # Dean's SimHub run: 1% lows 70 vs 71, same p99, no stutters, pacing 0.17 ms better
+    a = [run(14.3, 70, 0, pacing=0.62), run(14.2, 70, 0, pacing=0.63), run(14.3, 70, 0, pacing=0.62)]
+    b = [run(14.1, 71, 0, pacing=0.45), run(14.2, 70, 0, pacing=0.46), run(14.1, 71, 0, pacing=0.45)]
+    c = abtest.compare(a, b, "SimHub running", "SimHub paused")
+    assert c["metrics"]["pacing_error_ms"]["result"] == "better"
+    assert c["verdict"] == "same" and c["verdict_text"].startswith("No meaningful difference")
+    assert c["verdict_text"].isascii()
+
+
+# ---------------------------------------------------------------- stutter attribution
+
+from iroptimizer import stutters  # noqa: E402
+
+
+def _samples(n=30, spike_at=None, app=None, dpc=False):
+    out = []
+    for i in range(n):
+        t = 100.0 + i
+        procs = {"SimHubWPF.exe": 0.3, "Discord.exe": 0.02}
+        sys_ = {"cpu_pct": 20.0, "dpc_pct": 0.5, "interrupt_pct": 0.3}
+        if spike_at is not None and i in spike_at:
+            if app:
+                procs[app] = 1.2
+            if dpc:
+                sys_ = {"cpu_pct": 30.0, "dpc_pct": 6.0, "interrupt_pct": 2.0}
+        out.append({"t": t, "procs": procs, "sys": sys_})
+    return out
+
+
+EV = [{"t": 104.5, "ms": 48.0, "run": 1, "at_s": 4.5}, {"t": 117.2, "ms": 52.0, "run": 2, "at_s": 7.2}]
+
+
+def test_stutters_blame_a_waking_app():
+    a = stutters.attribute(EV, _samples(spike_at={5, 18}, app="OneDrive.exe"))
+    assert a["count"] == 2 and a["apps"][0]["name"] == "OneDrive.exe"
+    assert "OneDrive.exe used 1.20 cores" in a["text"]
+
+
+def test_stutters_blame_a_driver():
+    a = stutters.attribute(EV, _samples(spike_at={5, 18}, dpc=True))
+    assert "Driver time" in a["text"] and a["driver"]["during"] == 8.0
+
+
+def test_stutters_nothing_stood_out():
+    a = stutters.attribute(EV, _samples())
+    assert "Nothing outside iRacing stood out" in a["text"] and not a["apps"]
+    assert a["events"][0]["top"][0]["name"] == "SimHubWPF.exe"
+    assert stutters.attribute([], _samples())["text"] == "No stutters in the measured runs."
+
+
+def test_sampler_records_driver_time():
+    smp = winsys.BackgroundSampler(interval_s=0.2)
+    smp.start()
+    time.sleep(0.7)
+    smp.stop()
+    assert smp.samples and "cpu_pct" in smp.samples[-1]["sys"]

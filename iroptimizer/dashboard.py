@@ -52,6 +52,7 @@ def load_bundle(bdir: Path) -> dict | None:
         "repeatability": s.get("repeatability") or {},
         "caps": s.get("caps") or {},
         "suspects": s.get("suspects") or [],
+        "stutter_attribution": s.get("stutter_attribution") or {},
         "background": s.get("background") or [],
         "present_mode": s.get("present_mode") or {},
         "surface": s.get("surface") or {},
@@ -194,6 +195,10 @@ def findings(history: list[dict], elevation_problem: str | None = None) -> list[
     if _tearing(last):
         act = None if _gsync_tested(history) else {"id": "test:guided:G-Sync off:G-Sync on", "label": "Test G-Sync"}
         add("warn", "Frames are shown with tearing", last["present_mode"].get("sync_note", ""), act)
+
+    sa = last.get("stutter_attribution") or {}
+    if sa.get("count") and sa.get("text"):
+        add("warn" if sa["count"] >= 3 else "info", "What was busy during stutters", sa["text"])
 
     name, m = current_state(last)
     lim, why = _limit(m)

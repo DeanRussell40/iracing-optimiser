@@ -129,4 +129,6 @@ def install(want_sha: str, exe: Path | None = None, download: Callable[[Path], N
 
 def _launch(exe: Path) -> None:
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True)  # noqa: S603  # nosec B603
+    from .winsys import child_env
+    subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True,  # noqa: S603  # nosec B603
+                     env=child_env())

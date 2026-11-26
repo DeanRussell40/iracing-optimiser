@@ -43,13 +43,39 @@ COL_APP = ("Application", "ProcessName")
 MAX_FRAMES = 6_000_000
 
 
-def _resource_dirs() -> list[Path]:
+def cache_dir() -> Path:
+    """A stable copy of the bundled PresentMon, outside the exe's temp folder (not in Documents: OneDrive)."""
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(root) / "iRacingOptimizer" / "tools"
+
+
+def _bundled_dirs() -> list[Path]:
     dirs = []
     base = getattr(sys, "_MEIPASS", None)
     if base:
         dirs.append(Path(base) / "tools")
     dirs.append(Path(__file__).resolve().parent.parent / "tools")
     return dirs
+
+
+def _resource_dirs() -> list[Path]:
+    return [*_bundled_dirs(), cache_dir()]
+
+
+def ensure_cached() -> Path | None:
+    """Copies the bundled PresentMon to cache_dir() when the copy is missing or a different size (new build)."""
+    import shutil
+    for d in _bundled_dirs():
+        src = sorted(d.glob("PresentMon*.exe")) if d.is_dir() else []
+        if src:
+            dst = cache_dir() / "PresentMon.exe"
+            if not dst.is_file() or dst.stat().st_size != src[-1].stat().st_size:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dst.with_suffix(".tmp")
+                shutil.copy2(src[-1], tmp)
+                os.replace(tmp, dst)
+            return dst
+    return None
 
 
 def find_exe(extra_dirs: list[Path] | None = None) -> Path | None:

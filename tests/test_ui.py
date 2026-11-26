@@ -47,7 +47,7 @@ def history_dir(tmp_path: Path) -> Path:
                  suspects=["SimHubWPF.exe", "simmixer.exe"],
                  sync_note="Sync interval 0 and tearing allowed: frames are shown with tearing.")
     cmp = {"baseline": dashboard.BG_RUNNING, "variant": dashboard.BG_PAUSED, "verdict": "better",
-           "verdict_text": "Background apps paused is better than Background apps running: 1% low 33 → 71 fps.",
+           "verdict_text": "Background apps paused is better than Background apps running: 1% low 33 to 71 fps.",
            "metrics": {"low1_fps": {"a": 33, "b": 71}}}
     write_bundle(tmp_path, "20261126_161400", "2026-11-26T16:14:00",
                  [{"name": dashboard.BG_RUNNING}, {"name": dashboard.BG_PAUSED, "description": "SimHubWPF.exe, simmixer.exe"}],
@@ -307,3 +307,39 @@ def test_api_update_flow(tmp_path):
     assert api.update_status()["available"]
     assert api.update_install()["ok"] and up.installed == ["c" * 64]
     assert not api.update_install()["ok"]  # not twice
+
+
+def test_old_bundles_are_reanalysed(tmp_path):
+    api = make_api(tmp_path)
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
+    j = wait_done(api)
+    d = tmp_path / "bench" / j["result"]["id"]
+    s = json.loads((d / "summary.json").read_text(encoding="utf-8"))
+    s.pop("stutter_attribution")
+    (d / "summary.json").write_text(json.dumps(s), encoding="utf-8")  # as an older build wrote it
+    api2 = make_api(tmp_path)
+    api2.view()
+    assert "stutter_attribution" in json.loads((d / "summary.json").read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- relaunching a one-file exe
+
+def test_child_env_drops_pyinstaller_state():
+    from iroptimizer import winsys
+    env = winsys.child_env({"PATH": "x", "_MEIPASS2": "C:/t/_MEI1", "_PYI_APPLICATION_HOME_DIR": "C:/t/_MEI1",
+                            "_PYI_PARENT_PROCESS_LEVEL": "1"})
+    assert env == {"PATH": "x", "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def test_presentmon_cached_outside_temp(tmp_path, monkeypatch):
+    from iroptimizer import presentmon
+    bundled = tmp_path / "_MEI1" / "tools"
+    bundled.mkdir(parents=True)
+    (bundled / "PresentMon.exe").write_bytes(b"pm" * 100)
+    monkeypatch.setattr(presentmon, "_bundled_dirs", lambda: [bundled])
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    dst = presentmon.ensure_cached()
+    assert dst.read_bytes() == b"pm" * 100
+    import shutil
+    shutil.rmtree(tmp_path / "_MEI1")  # the parent copy exits and its temp folder goes
+    assert presentmon.find_exe() == dst
