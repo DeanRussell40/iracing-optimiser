@@ -187,3 +187,26 @@ def test_sync_note_flags_tearing():
            for i in range(200)]
     pm = metrics.present_mode_summary(frs)
     assert "tearing" in pm["sync_note"] and "does not show that G-Sync" in pm["note"]
+
+
+# ---------------------------------------------------------------- helper processes (WebView2 and friends)
+
+TABLE = {1: ("explorer.exe", 0), 10: ("iRacingOptimizer (1).exe", 1), 11: ("iRacingOptimizer (1).exe", 10),
+         12: ("msedgewebview2.exe", 11), 13: ("msedgewebview2.exe", 12),
+         20: ("SimHubWPF.exe", 1), 21: ("msedgewebview2.exe", 20), 22: ("msedgewebview2.exe", 21),
+         30: ("msedgewebview2.exe", 999)}
+
+
+def test_helpers_belong_to_their_owner():
+    assert winsys.family_in(TABLE, 11) == {1, 10, 11, 12, 13}
+    assert winsys.owner_in(TABLE, 22) == 20          # SimHub's dash browser counts as SimHub
+    assert winsys.owner_in(TABLE, 13) == 11          # our own window belongs to us
+    assert winsys.owner_in(TABLE, 30) is None        # orphan helper: nobody to blame
+    assert winsys.descendants_in(TABLE, 20) == {21, 22}
+    rows = [{"name": "msedgewebview2.exe", "avg_cores": 0.12, "protected": False},
+            {"name": "SimHubWPF.exe", "avg_cores": 1.07, "protected": False}]
+    assert winsys.suspects(rows) == ["SimHubWPF.exe"]
+
+
+def test_pauser_never_pauses_helpers_by_name(tmp_path):
+    assert winsys.ProcessPauser(tmp_path).pause(["msedgewebview2.exe", "conhost.exe"]) == []

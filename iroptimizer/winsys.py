@@ -34,14 +34,73 @@ PROTECTED = {
 PROTECTED_PREFIXES = (IRACING_PREFIX, "presentmon", "nvidia", "eos", "easyanticheat", "iracingoptimizer")
 
 
-def own_family() -> set[int]:
+# Helper processes other apps start (embedded browsers, consoles). Their CPU belongs to the app that started them, so
+# they are never listed or paused on their own: pausing a WebView2 process could freeze this app's own window or a
+# part of Windows. Pausing the owning app pauses its helpers with it.
+HELPERS = {"msedgewebview2.exe", "conhost.exe", "cefsharp.browsersubprocess.exe", "crashpad_handler.exe"}
+
+
+def process_table() -> dict[int, tuple[str, int]]:
+    """pid -> (name, parent pid) for every process, from one scan."""
+    out = {}
+    for p in psutil.process_iter(["name", "ppid"]):
+        out[p.pid] = (p.info["name"] or "", p.info["ppid"] or 0)
+    return out
+
+
+def family_in(table: dict[int, tuple[str, int]], pid: int) -> set[int]:
+    """pid, its ancestors and all its descendants, from a process table."""
+    fam = {pid}
+    cur, hops = pid, 0
+    while cur in table and hops < 64:  # ancestors
+        cur = table[cur][1]
+        if not cur or cur in fam:
+            break
+        fam.add(cur)
+        hops += 1
+    kids: dict[int, list[int]] = {}
+    for c, (_, pp) in table.items():
+        kids.setdefault(pp, []).append(c)
+    todo = [pid]
+    while todo:  # descendants
+        for c in kids.get(todo.pop(), []):
+            if c not in fam:
+                fam.add(c)
+                todo.append(c)
+    return fam
+
+
+def descendants_in(table: dict[int, tuple[str, int]], pid: int) -> set[int]:
+    kids: dict[int, list[int]] = {}
+    for c, (_, pp) in table.items():
+        kids.setdefault(pp, []).append(c)
+    out, todo = set(), [pid]
+    while todo:
+        for c in kids.get(todo.pop(), []):
+            if c not in out and c != pid:
+                out.add(c)
+                todo.append(c)
+    return out
+
+
+def owner_in(table: dict[int, tuple[str, int]], pid: int) -> int | None:
+    """For a helper process, the nearest ancestor that isn't a helper (the app it works for)."""
+    cur, hops = pid, 0
+    while cur in table and hops < 16:
+        name, pp = table[cur]
+        if name.lower() not in HELPERS:
+            return cur
+        if not pp or pp == cur:
+            return None
+        cur, hops = pp, hops + 1
+    return None
+
+
+def own_family(table: dict[int, tuple[str, int]] | None = None) -> set[int]:
     """This app's pids: itself, what launched it (the one-file bootloader) and everything it started (WebView2,
     PresentMon). Never blamed, never paused, whatever the exe is called."""
     try:
-        me = psutil.Process()
-        pids = {me.pid, *(q.pid for q in me.parents())}
-        pids.update(c.pid for c in me.children(recursive=True))
-        return pids
+        return family_in(table if table is not None else process_table(), os.getpid())
     except psutil.Error:
         return {os.getpid()}
 
@@ -242,16 +301,14 @@ class BackgroundSampler:
         self._stop = threading.Event()
         self._t: threading.Thread | None = None
         self._procs: dict[int, psutil.Process] = {}
-        self._mine: set[int] = set()
-        self._ticks = 0
 
     def _tick(self) -> dict[str, float]:
         seen: dict[str, float] = {}
-        if self._ticks % 10 == 0:  # children (WebView2, PresentMon) come and go; refreshing costs a process scan
-            self._mine = own_family()
-        self._ticks += 1
-        for p in psutil.process_iter(["name"]):
-            if p.pid in self._mine:
+        procs = list(psutil.process_iter(["name", "ppid"]))  # one scan per tick
+        table = {p.pid: (p.info["name"] or "", p.info["ppid"] or 0) for p in procs}
+        mine = own_family(table)
+        for p in procs:
+            if p.pid in mine:
                 continue
             if p.pid not in self._procs:
                 self._procs[p.pid] = p
@@ -264,8 +321,16 @@ class BackgroundSampler:
                 c = self._procs[p.pid].cpu_percent(None) / 100
             except psutil.Error:
                 continue
-            name = p.info["name"] or str(p.pid)
-            if c > 0.005 and not name.lower().startswith(IRACING_PREFIX) and name.lower() != "system idle process":
+            if c <= 0.005:
+                continue
+            pid = p.pid
+            if (p.info["name"] or "").lower() in HELPERS:  # count it under the app that started it
+                owner = owner_in(table, pid)
+                if owner is None or owner in mine:
+                    continue
+                pid = owner
+            name = table[pid][0] or str(pid)
+            if not name.lower().startswith(IRACING_PREFIX) and name.lower() != "system idle process":
                 seen[name] = seen.get(name, 0) + c
         return seen
 
@@ -306,7 +371,8 @@ def summarize_background(samples: list[dict], t0: float | None = None, t1: float
 
 def suspects(rows: list[dict], min_avg_cores: float = 0.05) -> list[str]:
     """Background apps worth testing with an A/B pause: busy and not part of Windows, the GPU driver or iRacing."""
-    return [r["name"] for r in rows if not r["protected"] and r["avg_cores"] >= min_avg_cores]
+    return [r["name"] for r in rows if not r["protected"] and r["name"].lower() not in HELPERS
+            and r["avg_cores"] >= min_avg_cores]
 
 
 # ---------------------------------------------------------------------------- pausing processes
@@ -327,20 +393,29 @@ class ProcessPauser:
         self.state.write_text(json.dumps({"pids": self.paused}), encoding="utf-8")
 
     def pause(self, names: list[str]) -> list[str]:
-        """Returns the names actually paused (skips protected and inaccessible ones)."""
-        want = {n.lower() for n in names if not is_protected(n)}
-        never = own_family()  # never freeze this app, what launched it or its window
+        """Pauses the named apps and their helper processes. Returns the names actually paused (skips protected and
+        inaccessible ones, and never touches this app's own processes)."""
+        want = {n.lower() for n in names if not is_protected(n) and n.lower() not in HELPERS}
+        table = process_table()
+        never = own_family(table)  # never freeze this app, what launched it or its window
+        targets: list[tuple[int, str]] = []
+        for pid, (n, _) in table.items():
+            if n.lower() in want and pid not in never:
+                targets.append((pid, n))
+                targets += [(c, table[c][0]) for c in descendants_in(table, pid)
+                            if c not in never and not is_protected(table[c][0])]
         done = []
-        for p in psutil.process_iter(["name"]):
-            n = (p.info["name"] or "")
-            if n.lower() in want and p.pid not in never:
-                try:
-                    p.suspend()
-                    self.paused.append(p.pid)
+        for pid, n in dict(targets).items():
+            if pid in self.paused:
+                continue
+            try:
+                psutil.Process(pid).suspend()
+                self.paused.append(pid)
+                if n.lower() in want:
                     done.append(n)
-                    self._save()
-                except psutil.Error:
-                    pass
+                self._save()
+            except psutil.Error:
+                pass
         return sorted(set(done))
 
     def resume(self) -> None:
