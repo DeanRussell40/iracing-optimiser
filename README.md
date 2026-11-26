@@ -12,7 +12,7 @@ Built on [empg80/iRacing-Optimizer](https://github.com/empg80/iRacing-Optimizer)
 
 **Milestone 1: prove the measurement can be trusted.** It changes no settings.
 
-The new **Replay bench** tab plays the same replay segment several times and reports:
+The main window has three screens: **Tune** (live readouts, the Smoothness to Graphics slider and the next test to run), **Results** (progress chart, plain-English summary and every test) and **Backups**. The older tabbed window is still there under **Classic window**. The bench plays the same replay segment several times and reports:
 
 - **Repeatability:** how much frame time p99 moves between identical runs. If it moves more than 5%, settings can't be compared yet, and finding the noise comes first.
 - **Present path:** whether iRacing's frames go straight to the screen (Independent Flip, G-Sync can work) or through the Windows compositor (Composed Flip, extra latency, G-Sync may not engage).

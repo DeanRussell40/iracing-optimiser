@@ -1,9 +1,21 @@
-"""Punto de entrada del ejecutable: sin argumentos abre la interfaz; con argumentos, la CLI."""
+"""Executable entry point. No arguments: the main window. With arguments: the command line.
+
+--classic opens the older Tk window; --tray (start with Windows, minimised) also uses it.
+"""
 import sys
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] != "--tray":  # --tray: inicio con Windows, minimizada
+    args = sys.argv[1:]
+    if args and args[0] not in ("--tray", "--classic"):
         from iroptimizer.cli import main
+        main()
     else:
-        from iroptimizer.gui import main
-    main()
+        opened = False
+        if not args:
+            from iroptimizer import webapp
+            opened = webapp.main()  # False when WebView2 isn't available
+        if not opened:
+            if "--classic" in sys.argv:
+                sys.argv.remove("--classic")
+            from iroptimizer.gui import main
+            main()
