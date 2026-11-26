@@ -61,7 +61,7 @@ class Api:
                  presentmon_exe: Callable[[], Path | None] | None = None, elevation: Callable[[], str | None] | None = None,
                  sampler_factory: Callable | None = None, pauser_factory: Callable | None = None,
                  ini_dir: Callable[[], Path] | None = None, scan_seconds: float = 5.0, opener: Callable = _open,
-                 bench_overrides: dict | None = None):
+                 bench_overrides: dict | None = None, updater=None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
         self._window = None
@@ -80,6 +80,8 @@ class Api:
         self._bench_overrides = bench_overrides or {}
         self._machine = None
         self._resumed = 0
+        self._update: dict = {"available": False, "state": "checking"}
+        self._updater = updater
         try:
             from . import winsys
             self._resumed = winsys.resume_leftovers(self._out_dir)
@@ -133,6 +135,7 @@ class Api:
             v["backups"] = self.backups()
             v["focus_labels"] = list(abtest.FOCUS_LABELS)
             v["job"] = self._job_state(0)
+            v["update"] = self.update_status()
             v["notice"] = (f"Resumed {self._resumed} app(s) that a previous test left paused."
                            if self._resumed else "")
             self._resumed = 0
@@ -346,6 +349,45 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ------------------------------------------------------------------ updates
+    def _check_update(self) -> None:
+        up = self._updater
+        if up is None:
+            from . import selfupdate as up
+        up.cleanup()
+        r = up.check()
+        r["state"] = "ready" if r.get("available") else "current"
+        self._update = r
+
+    def start_update_check(self) -> None:
+        threading.Thread(target=self._check_update, daemon=True).start()
+
+    def update_status(self) -> dict:
+        u = self._update
+        return {"available": bool(u.get("available")), "state": u.get("state"), "error": u.get("error"),
+                "progress": u.get("progress")}
+
+    def update_install(self) -> dict:
+        """Downloads the newest build, swaps it in, starts it and closes this window."""
+        u = self._update
+        if not u.get("available") or u.get("state") in ("installing", "done"):
+            return {"ok": False, "error": "No update to install."}
+        if self._job and self._job.state == "running":
+            return {"ok": False, "error": "Wait for the test to finish first."}
+        up = self._updater
+        if up is None:
+            from . import selfupdate as up
+        u["state"] = "installing"
+        try:
+            up.install(u["sha"], progress=lambda f: u.__setitem__("progress", f))
+        except Exception as e:
+            u["state"], u["error"] = "ready", str(e)
+            return {"ok": False, "error": f"Update failed, nothing was changed: {e}"}
+        u["state"] = "done"
+        if self._window is not None:
+            threading.Timer(0.5, self._window.destroy).start()
+        return {"ok": True}
+
     def open_classic(self) -> dict:
         """Opens the older window, which still has the tools not yet moved here (profiles, diagnostics, VR)."""
         try:
@@ -433,6 +475,7 @@ def main(out_dir: Path | None = None) -> bool:
     window = webview.create_window(APP, url=str(index), js_api=api, width=1320, height=900, min_size=(960, 680),
                                    background_color="#111317", text_select=True)
     api._window = window
+    api.start_update_check()
     try:
         webview.start(gui="edgechromium" if sys.platform == "win32" else None, debug=bool(os.environ.get("IRO_DEBUG")))
     except Exception:

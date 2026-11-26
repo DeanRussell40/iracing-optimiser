@@ -128,8 +128,9 @@ def _gsync_tested(history: list[dict]) -> bool:
 
 def next_step(history: list[dict]) -> dict:
     if not history:
-        return {"test": "repeat", "label": "Measure my PC",
-                "why": "First, a baseline: the same replay several times, changing nothing."}
+        return {"test": "auto", "label": "Measure my PC",
+                "why": "Looks for busy background apps first. If it finds any, it measures with them running and "
+                       "paused, which also gives your baseline. If not, it measures your PC as it is."}
     last = history[-1]
     rep = last["repeatability"].get("verdict")
     if rep == "capped":
