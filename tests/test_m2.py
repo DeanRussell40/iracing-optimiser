@@ -170,12 +170,12 @@ def test_ab_run_end_to_end(tmp_path):
                            variants=vs)
     # plan: warm A, A B B A A B -> pause/resume pairs balance, and the last revert always runs
     assert calls.count("pause") == calls.count("resume") >= 2
-    s = json.loads((bdir / "summary.json").read_text())
+    s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
     assert s["kind"] == "ab" and len(s["comparisons"]) == 1
     assert s["comparisons"][0]["variant"] == "Background apps paused"
     assert {r["window"]["variant"] for r in s["runs"]} == {v.name for v in vs}
     assert s["caps"]["available"]
-    html = (bdir / "report.html").read_text()
+    html = (bdir / "report.html").read_text(encoding="utf-8")
     assert "A/B result" in html and "7680×1440" in html
 
 
