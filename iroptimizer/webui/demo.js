@@ -49,8 +49,8 @@ const VIEW = {
   },
   {
    "level": "info",
-   "title": "The graphics card is the limit",
-   "detail": "It is busy 98% of frames. More frames have to come from lighter graphics settings, and a frame cap below what it can hold keeps pacing even.",
+   "title": "In this scene the graphics card sets the frame rate",
+   "detail": "It is busy 98% of frames. That's normal on three 1440p screens, which is 11 million pixels a frame, even for a top graphics card. It says nothing is wrong with the card. It describes this scene only: a packed race start can shift the limit to the processor. More frames here come from lighter graphics settings, and a frame cap just below what it holds keeps pacing even.",
    "action": null
   },
   {
@@ -69,7 +69,7 @@ const VIEW = {
  },
  "headline": "Background apps were costing you smoothness",
  "summary": [
-  "Your graphics card is the limit (busy 98% of frames) at about 86 fps across 7680 × 1440. The processor has headroom.",
+  "In this scene the graphics card sets the frame rate (busy 98% of frames) at about 86 fps across 7680 × 1440, with the processor to spare. That's normal at this resolution and isn't a fault; a busier scene can make the processor the limit instead.",
   "Busy background apps caused stutter. Pausing them changed 1% lows from 33 to 71 fps.",
   "Frames are shown with tearing. The app can't read whether G-Sync is on, so test G-Sync on vs off next.",
   "No graphics settings have been changed by the app, so there are no compromises to report yet."

@@ -75,7 +75,7 @@ def test_view_after_background_ab(tmp_path):
     assert v["headline"] == "Background apps were costing you smoothness"
     titles = [f["title"] for f in v["findings"]]
     assert "Background apps were costing you smoothness" in titles
-    assert "Frames are shown with tearing" in titles and "The graphics card is the limit" in titles
+    assert "Frames are shown with tearing" in titles and "In this scene the graphics card sets the frame rate" in titles
     # next step after background: the G-Sync A/B the tearing calls for
     assert v["next"]["test"] == "guided" and v["next"]["b"] == "G-Sync on"
     assert [p["value"] for p in v["chart"]] == [33, 33, 71]
