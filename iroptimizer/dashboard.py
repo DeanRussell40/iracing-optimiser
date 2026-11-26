@@ -205,11 +205,15 @@ def findings(history: list[dict], elevation_problem: str | None = None) -> list[
     name, m = current_state(last)
     lim, why = _limit(m)
     if lim == "GPU":
-        add("info", "The graphics card is the limit",
-            f"It is {why}. More frames have to come from lighter graphics settings, and a frame cap below what it "
-            "can hold keeps pacing even.")
+        add("info", "In this scene the graphics card sets the frame rate",
+            f"It is {why}. That's normal on three 1440p screens, which is 11 million pixels a frame, even for a "
+            "top graphics card. It says nothing is wrong with the card. It describes this scene only: a packed "
+            "race start can shift the limit to the processor. More frames here come from lighter graphics "
+            "settings, and a frame cap just below what it holds keeps pacing even.")
     elif lim == "CPU":
-        add("info", "The processor is the limit", f"The {why}. Lighter graphics settings won't add many frames here.")
+        add("info", "In this scene the processor sets the frame rate",
+            f"The {why}. That's typical for iRacing with many cars on screen. Lighter graphics settings won't add "
+            "many frames here; fewer cars drawn will.")
     caps = last["caps"]
     if caps.get("available") and caps.get("text"):
         add("info", f"Your PC holds a {caps['best']} FPS cap" if caps.get("best") else "No steady frame cap found",
@@ -229,10 +233,11 @@ def summary(history: list[dict]) -> tuple[str, list[str]]:
     surf = last["surface"]
     where = f" across {surf['width']} × {surf['height']}" if surf.get("width") else ""
     paras = []
-    load = {"GPU": f"Your graphics card is the limit ({why}) at about {_fmt(m.get('avg_fps'))} fps{where}. "
-                   "The processor has headroom.",
-            "CPU": f"Your processor is the limit ({why}) at about {_fmt(m.get('avg_fps'))} fps{where}. "
-                   "The graphics card is waiting on it.",
+    load = {"GPU": f"In this scene the graphics card sets the frame rate ({why}) at about "
+                   f"{_fmt(m.get('avg_fps'))} fps{where}, with the processor to spare. That's normal at this "
+                   "resolution and isn't a fault; a busier scene can make the processor the limit instead.",
+            "CPU": f"In this scene the processor sets the frame rate ({why}) at about {_fmt(m.get('avg_fps'))} "
+                   f"fps{where}. The graphics card is waiting on it.",
             "Mixed": f"Neither part is clearly the limit ({why}) at about {_fmt(m.get('avg_fps'))} fps{where}."
             }.get(lim, f"About {_fmt(m.get('avg_fps'))} fps{where}. GPU load wasn't measured.")
     paras.append(load)

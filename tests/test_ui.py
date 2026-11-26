@@ -75,7 +75,7 @@ def test_view_after_background_ab(tmp_path):
     assert v["headline"] == "Background apps were costing you smoothness"
     titles = [f["title"] for f in v["findings"]]
     assert "Background apps were costing you smoothness" in titles
-    assert "Frames are shown with tearing" in titles and "The graphics card is the limit" in titles
+    assert "Frames are shown with tearing" in titles and "In this scene the graphics card sets the frame rate" in titles
     # next step after background: the G-Sync A/B the tearing calls for
     assert v["next"]["test"] == "guided" and v["next"]["b"] == "G-Sync on"
     assert [p["value"] for p in v["chart"]] == [33, 33, 71]
@@ -411,3 +411,32 @@ def test_version_label_and_tag_check(tmp_path, monkeypatch):
 
 def test_view_reports_version(tmp_path):
     assert make_api(tmp_path).view()["version"].startswith("0.")
+
+
+def test_empty_run_folders_are_removed_and_data_kept(tmp_path):
+    import os
+    root = tmp_path / "bench"
+    empty, data, fresh = root / "20261126_193100", root / "20261126_195240", root / "20261126_200000"
+    for d in (empty, data, fresh):
+        d.mkdir(parents=True)
+    (empty / "presentmon_raw.csv").write_bytes(b"")
+    (data / "presentmon_raw.csv").write_bytes(b"frames")
+    (fresh / "presentmon_raw.csv").write_bytes(b"")
+    old = time.time() - 3600
+    os.utime(empty, (old, old))
+    os.utime(data, (old, old))
+    assert webapp.remove_empty_runs(root) == 1
+    assert not empty.exists() and data.exists() and fresh.exists()  # a fresh one may still be running
+
+
+def test_app_log_records_tests_and_window_errors(tmp_path):
+    api = make_api(tmp_path)
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
+    j = wait_done(api)
+    assert j["id"] and j["result"]["id"]
+    api.log_js("TypeError: x is undefined")
+    from iroptimizer import applog
+    for h in applog.get().handlers:
+        h.flush()
+    text = (tmp_path / "logs" / "app.log").read_text(encoding="utf-8")
+    assert "app start" in text and "test start" in text and "test done" in text and "window: TypeError" in text
