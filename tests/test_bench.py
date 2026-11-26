@@ -15,6 +15,11 @@ from iroptimizer import bench, frames as framelib, metrics
 
 FIX = Path(__file__).parent / "fixtures" / "real"
 
+
+@pytest.fixture(autouse=True)
+def _short_runs(monkeypatch):
+    monkeypatch.setattr(bench, "MIN_SECONDS", 0.1)
+
 V2_HEADER = ["Application", "ProcessID", "SwapChainAddress", "PresentRuntime", "SyncInterval", "PresentFlags",
              "AllowsTearing", "PresentMode", "CPUStartDateTime", "MsBetweenPresents", "MsBetweenDisplayChange",
              "MsInPresentAPI", "MsUntilDisplayed", "MsCPUBusy", "MsGPUBusy", "MsDisplayLatency"]
@@ -162,12 +167,12 @@ def test_bench_end_to_end(tmp_path):
     bdir = bench.run_bench(cfg, tmp_path, drv, FakeCapture, log=lambda s: None, sampler=NoGpu(),
                            fingerprint=lambda: {"hardware": {"display": {"width": 7680, "height": 1440, "refresh": 240}}})
     assert drv.calls.count(("seek", 1000)) == 4
-    s = json.loads((bdir / "summary.json").read_text())
+    s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
     assert len(s["runs"]) == 4 and s["runs"][0]["window"]["warmup"]
     assert all(r["metrics"]["frames"] > 100 for r in s["runs"])
     assert s["repeatability"]["runs"] == 3 and s["repeatability"]["verdict"] in ("pass", "fail")
     assert s["present_mode"]["kind"] == "composed_flip"
-    assert (bdir / "report.html").read_text().count("Run ") >= 3
+    assert (bdir / "report.html").read_text(encoding="utf-8").count("Run ") >= 3
     assert (bdir / "presentmon_raw.csv.gz").is_file() and not (bdir / "presentmon_raw.csv").exists()
     z = bdir.parent / f"bench_{bdir.name}.zip"
     assert {"bench.json", "frames.csv.gz", "report.html"} <= {Path(n).name for n in zipfile.ZipFile(z).namelist()}
@@ -186,6 +191,6 @@ def test_bench_flags_replay_not_playing(tmp_path):
         def play(self): pass  # replay never moves
     cfg = bench.BenchConfig(seconds=0.4, runs=3, warmup_runs=0, settle_s=0.0, lead_trim_s=0.0)
     bdir = bench.run_bench(cfg, tmp_path, Stuck(), FakeCapture, log=lambda s: None, sampler=NoGpu(), fingerprint=dict)
-    s = json.loads((bdir / "summary.json").read_text())
+    s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
     assert all(not r["window"]["valid"] for r in s["runs"])
     assert s["repeatability"]["verdict"] == "insufficient"

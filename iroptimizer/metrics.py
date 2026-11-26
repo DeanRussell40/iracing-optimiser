@@ -21,9 +21,16 @@ from .frames import Frame
 # Gate for milestone 1: the same replay segment must give p99 frame times within this spread
 REPEATABILITY_GATE_PCT = 5.0
 
+# A run counts as capped when the fast side of the frame-time distribution is cut off (the 5th percentile
+# is within this % of the median) and the GPU is idle for part of each frame. A frame cap (NVIDIA app,
+# iRacing's own limiter, V-Sync) produces exactly that shape; an uncapped run does not.
+CAP_TAIL_PCT = 2.0
+CAP_GPU_SHARE = 0.85
+
 PRESENT_MODE_NOTES = {
-    "independent": ("good", "Independent Flip: the game's frames go straight to the display. G-Sync/VRR can "
-                            "work and there is no extra compositor latency."),
+    "independent": ("good", "Independent Flip: the game's frames go straight to the display with no compositor "
+                            "delay. This is the only path where G-Sync can work, but it does not show that G-Sync "
+                            "is actually on."),
     "composed_flip": ("warn", "Composed Flip: Windows' compositor (DWM) assembles each frame. This usually adds "
                               "about one refresh of latency and G-Sync may not engage. With a window spanning "
                               "three separate monitors this is expected, because Independent Flip only works on "
@@ -63,7 +70,17 @@ def present_mode_summary(frames: list[Frame]) -> dict:
     tearing = Counter(fr.allows_tearing for fr in frames if fr.allows_tearing is not None)
     sync = Counter(fr.sync_interval for fr in frames if fr.sync_interval is not None)
     level, note = PRESENT_MODE_NOTES[kind]
+    tear_pct = (100 * tearing.get(True, 0) / sum(tearing.values())) if tearing else None
+    si = sync.most_common(1)[0][0] if sync else None
+    if si == 0 and tear_pct is not None and tear_pct >= 90:
+        sync_note = ("V-Sync is off and tearing is allowed. Unless G-Sync is on and working on every screen, "
+                     "each frame replaces the last mid-refresh, which shows as tearing.")
+    elif si and si >= 1:
+        sync_note = "V-Sync is on: frames wait for the next refresh. No tearing, but up to a refresh of extra latency."
+    else:
+        sync_note = None
     return {
+        "sync_note": sync_note,
         "available": True,
         "dominant": dominant,
         "dominant_pct": 100 * count / n,
@@ -88,6 +105,18 @@ def count_stutters(fts: list[float]) -> int:
     return n
 
 
+def detect_cap(fts_sorted: list[float], gpu_busy_p50: float | None) -> float | None:
+    """Returns the cap in FPS when the run looks held at a fixed frame rate, else None."""
+    p5, p50 = _pct(fts_sorted, 5), _pct(fts_sorted, 50)
+    if not p5 or not p50:
+        return None
+    if (p50 - p5) / p50 * 100 >= CAP_TAIL_PCT:
+        return None  # frames were free to run faster than the median: not capped
+    if gpu_busy_p50 is not None and gpu_busy_p50 >= CAP_GPU_SHARE * p50:
+        return None  # GPU busy the whole frame: GPU-bound at a steady rate, not a cap
+    return 1000 / p50
+
+
 def run_metrics(frames: list[Frame]) -> dict:
     """Metrics for one run. Returns {} when there are too few frames to mean anything."""
     fts = [fr.frametime for fr in frames]
@@ -108,7 +137,8 @@ def run_metrics(frames: list[Frame]) -> dict:
         "low1_fps": 1000 / p99,
         "low01_fps": 1000 / p999,
         "pacing_error_ms": pacing,
-        "stutters": count_stutters(fts),
+        "stutters": (st := count_stutters(fts)),
+        "stutters_per_min": st / max(1e-6, sum(fts) / 60000),
     }
     disp_known = [fr for fr in frames if fr.displayed is not None]
     if disp_known:
@@ -125,6 +155,10 @@ def run_metrics(frames: list[Frame]) -> dict:
     if bound:
         out["gpu_bound_pct"] = 100 * sum(1 for fr in bound if fr.gpu_busy >= 0.9 * fr.frametime) / len(bound)
         out["gpu_busy_p50_ms"] = _pct(sorted(fr.gpu_busy for fr in bound), 50)
+    cap = detect_cap(s, out.get("gpu_busy_p50_ms"))
+    out["capped"] = cap is not None
+    if cap is not None:
+        out["cap_fps"] = cap
     return out
 
 
@@ -168,7 +202,18 @@ def repeatability(runs: list[dict], gate_pct: float = REPEATABILITY_GATE_PCT) ->
                                "spread_pct": spread, "cv_pct": (sd / mean * 100) if mean else None,
                                "trend": _monotonic(vals)}
     p99 = out["metrics"].get("frametime_p99_ms")
-    if len(good) < 3 or not p99 or p99["spread_pct"] is None:
+    capped = [r for r in good if r.get("capped")]
+    out["capped_runs"] = len(capped)
+    if capped:
+        fps = median(r["cap_fps"] for r in capped)
+        out["cap_fps"] = fps
+        out["verdict"] = "capped"
+        out["verdict_text"] = (
+            f"NOT VALID: the frame rate was held at a cap of about {fps:.0f} FPS in {len(capped)} of {len(good)} runs. "
+            "A cap hides how much headroom the PC has and every difference between settings above it, so this "
+            "result cannot pass. Turn off the frame rate limit in the NVIDIA app (Max Frame Rate) and in iRacing "
+            "(FPS limit), and V-Sync, then run the bench again. Put your cap back afterwards.")
+    elif len(good) < 3 or not p99 or p99["spread_pct"] is None:
         out["verdict"] = "insufficient"
         out["verdict_text"] = "Not enough valid runs to judge repeatability (need at least 3)."
     elif p99["spread_pct"] <= gate_pct:

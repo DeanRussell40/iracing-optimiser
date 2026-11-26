@@ -167,7 +167,14 @@ def cmd_bench(args):
         raise RuntimeError("PresentMon not found; the bench needs it.")
     cfg = bench.BenchConfig(seconds=args.seconds, runs=args.runs, warmup_runs=args.warmup,
                             settle_s=args.settle, start_frame=args.frame)
-    bdir = bench.run_bench(cfg, out, bench.IRSDKDriver(), lambda p: presentmon.Capture(exe, p))
+    variants = None
+    if args.pause:
+        from . import winsys
+        pauser = winsys.ProcessPauser(out)
+        variants = [bench.Variant("Background apps running"),
+                    bench.Variant("Background apps paused", apply=lambda: pauser.pause(args.pause), revert=pauser.resume,
+                                  description=", ".join(args.pause))]
+    bdir = bench.run_bench(cfg, out, bench.IRSDKDriver(), lambda p: presentmon.Capture(exe, p), variants=variants)
     s = bench.analyze_bundle(bdir)
     print(s["repeatability"]["verdict_text"])
     print(f"Report: {bdir / 'report.html'}")
@@ -253,6 +260,7 @@ def main(argv=None):
     b.add_argument("--warmup", type=int, default=1)
     b.add_argument("--settle", type=float, default=4.0)
     b.add_argument("--frame", type=int, help="Replay frame to start from (default: current position)")
+    b.add_argument("--pause", nargs="+", metavar="EXE", help="A/B test: pause these processes on the B runs")
     b.add_argument("--no-browser", action="store_true")
     b.set_defaults(fn=cmd_bench)
 

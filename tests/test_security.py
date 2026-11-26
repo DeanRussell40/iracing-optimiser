@@ -120,9 +120,9 @@ def test_update_check_parsing_and_urls(monkeypatch):
     from iroptimizer import updates
     assert updates.parse_version("v0.9.0") == (0, 9, 0) == updates.parse_version("0.9.0")
     assert updates.parse_version("0.9.0-beta") is None and updates.parse_version("../x") is None
-    good = {"tag_name": "0.9.0", "html_url": "https://github.com/empg80/iRacing-Optimizer/releases/tag/0.9.0",
+    good = {"tag_name": "0.9.0", "html_url": "https://github.com/DeanRussell40/iracing-optimiser/releases/tag/0.9.0",
             "assets": [{"name": "iRacingOptimizer.exe",
-                        "browser_download_url": "https://github.com/empg80/iRacing-Optimizer/releases/download/0.9.0/iRacingOptimizer.exe"}]}
+                        "browser_download_url": "https://github.com/DeanRussell40/iracing-optimiser/releases/download/0.9.0/iRacingOptimizer.exe"}]}
     rel = updates.parse_release(good)
     assert rel["version"] == "0.9.0" and rel["download_url"].endswith("/iRacingOptimizer.exe")
     evil = dict(good, html_url="https://evil.example/x",

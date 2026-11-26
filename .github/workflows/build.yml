@@ -139,3 +139,27 @@ jobs:
           files: |
             dist/iRacingOptimizer.exe
             dist/SHA256SUMS.txt
+
+  # A fixed download link for every build of main:
+  # https://github.com/<owner>/<repo>/releases/download/latest/iRacingOptimizer.exe
+  latest:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: iRacingOptimizer-windows
+          path: dist
+      - name: Publish as the "latest" download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh release delete latest -R "$REPO" --yes --cleanup-tag || true
+          gh release create latest dist/iRacingOptimizer.exe dist/SHA256SUMS.txt -R "$REPO" \
+            --target "$SHA" --prerelease --title "Latest build" \
+            --notes "Built automatically from main at $SHA. Download iRacingOptimizer.exe below."
