@@ -73,7 +73,7 @@ function render(v) {
   $("headline").textContent = v.headline;
   $("summary").innerHTML = v.summary.map(p => `<p>${esc(p)}</p>`).join("");
   $("tests").innerHTML = v.tests.length ? v.tests.map(t =>
-    `<tr><td class="nowrap">${esc(t.when)}</td><td>${esc(t.test)}</td><td class="n">${esc(t.low1)}</td><td class="n">${esc(t.p99)}</td>` +
+    `<tr${t.stale ? ' class="stale"' : ""}><td class="nowrap">${esc(t.when)}</td><td>${esc(t.test)}${t.stale ? ' <span class="tag info">Other settings</span>' : ""}</td><td class="n">${esc(t.low1)}</td><td class="n">${esc(t.p99)}</td>` +
     `<td><span class="tag ${esc(t.level)}">${esc(t.verdict)}</span></td>` +
     `<td class="n"><button class="ghost" data-report="${esc(t.id)}">Report</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="empty">No tests yet.</td></tr>`;
@@ -120,8 +120,9 @@ function drawChart() {
   const lab = (txt, max) => txt.length > max ? txt.slice(0, max - 1) + "…" : txt;
   const maxChars = Math.max(6, Math.floor(step / 7.5));
   pts.forEach((p, i) => {
-    const best = p.value === Math.max(...pts.map(q => q.value));
-    g += `<rect x="${x(i) - bw / 2}" y="${y(p.value)}" width="${bw}" height="${y(0) - y(p.value)}" rx="4" class="${best ? "bar best" : "bar"}"><title>${esc(p.label)}: ${p.value} fps (${esc(p.when)})</title></rect>`;
+    // "best" only among tests on the current settings; older settings are drawn faded
+    const best = !p.stale && p.value === Math.max(...pts.filter(q => !q.stale).map(q => q.value));
+    g += `<rect x="${x(i) - bw / 2}" y="${y(p.value)}" width="${bw}" height="${y(0) - y(p.value)}" rx="4" class="bar${best ? " best" : ""}${p.stale ? " stale" : ""}"><title>${esc(p.label)}: ${p.value} fps (${esc(p.when)})${p.stale ? ", other graphics settings" : ""}</title></rect>`;
     g += `<text x="${x(i)}" y="${y(p.value) - 8}" text-anchor="middle" class="val">${Math.round(p.value)}</text>`;
     g += `<text x="${x(i)}" y="${H - 34}" text-anchor="middle">${esc(lab(p.label, maxChars))}</text><text x="${x(i)}" y="${H - 16}" text-anchor="middle">${esc(lab(p.when, maxChars))}</text>`;
   });
@@ -161,7 +162,12 @@ async function startTest(test, extra = {}) {
   if (test === "guided") {
     opts.a = extra.a || $("ab-a").value; opts.b = extra.b || $("ab-b").value;
   }
-  const r = await call("start", test, opts);
+  let r = await call("start", test, opts);
+  if (!r.ok && r.fix === "settings_mismatch") {
+    if (!await dialog({title: "Replay and race graphics differ", html: `<p>${esc(r.error)}</p>`, ok: "Test anyway"})) return;
+    opts.ignore_settings = true;
+    r = await call("start", test, opts);
+  }
   if (!r.ok) {
     if (r.fix === "relaunch_admin") {
       if (await dialog({title: "Restart as administrator?", html: `<p>${esc(r.error)}</p>`, ok: "Restart as administrator"})) relaunch();

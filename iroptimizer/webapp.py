@@ -61,7 +61,8 @@ class Api:
                  presentmon_exe: Callable[[], Path | None] | None = None, elevation: Callable[[], str | None] | None = None,
                  sampler_factory: Callable | None = None, pauser_factory: Callable | None = None,
                  ini_dir: Callable[[], Path] | None = None, scan_seconds: float = 5.0, opener: Callable = _open,
-                 bench_overrides: dict | None = None, updater=None):
+                 bench_overrides: dict | None = None, updater=None, settings_snapshot: Callable | None = None,
+                 simhub_capture: Callable | None = None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
         self._window = None
@@ -82,6 +83,8 @@ class Api:
         self._resumed = 0
         self._update: dict = {"available": False, "state": "checking"}
         self._updater = updater
+        self._snapshot_fn = settings_snapshot
+        self._simhub_fn = simhub_capture
         try:
             from . import presentmon
             presentmon.ensure_cached()  # a copy outside the temp folder, in case that folder disappears
@@ -144,16 +147,49 @@ class Api:
         for d in self._bench_root.iterdir():
             try:
                 sj = d / "summary.json"
-                if (d / "bench.json").is_file() and (not sj.is_file() or b'"stutter_attribution"' not in sj.read_bytes()):
+                if (d / "bench.json").is_file() and (not sj.is_file() or b'"replay_mismatch"' not in sj.read_bytes()):
                     bench.analyze_bundle(d)
             except Exception:
                 continue
+
+    def _snapshot(self) -> dict | None:
+        """iRacing's graphics settings as they are on disk now."""
+        try:
+            if self._snapshot_fn:
+                return self._snapshot_fn()
+            from . import config_reader
+            return config_reader.snapshot(config_reader.load())
+        except Exception:
+            return None
+
+    def _settings_state(self) -> tuple[str | None, str | None]:
+        """(fingerprint of the current graphics settings, replay-vs-race problem text or None)."""
+        from . import config_reader
+        snap = self._snapshot()
+        if not snap:
+            return None, None
+        try:
+            return config_reader.settings_key(snap), config_reader.mismatch_text(config_reader.replay_mismatch(snap)) or None
+        except Exception:
+            return None, None
+
+    def _simhub_capture(self) -> bool | None:
+        try:
+            if self._simhub_fn:
+                return self._simhub_fn()
+            from . import capture
+            return capture.simhub_capture_on()
+        except Exception:
+            return None
 
     def view(self) -> dict:
         try:
             self._reanalyse_old()
             focus = int(self._settings().get("focus", 1))
-            v = dashboard.view(self._bench_root, focus, self._elevation_problem(), self._machine_line())
+            key, problem = self._settings_state()
+            v = dashboard.view(self._bench_root, focus, self._elevation_problem(), self._machine_line(),
+                               current_key=key, settings_problem=problem,
+                               capture={"simhub": self._simhub_capture()})
             from . import version_label
             v["version"] = version_label()
             v["backups"] = self.backups()
@@ -229,6 +265,9 @@ class Api:
         problem = self._elevation_problem()
         if problem:
             return {"ok": False, "error": problem, "fix": "relaunch_admin"}
+        _key, mismatch = self._settings_state()
+        if mismatch and not opts.get("ignore_settings"):
+            return {"ok": False, "error": mismatch, "fix": "settings_mismatch"}
         try:
             cfg = bench.BenchConfig(seconds=float(opts.get("seconds") or 60), runs=int(opts.get("runs") or 5),
                                     warmup_runs=int(opts.get("warmup") if opts.get("warmup") is not None else 1),
