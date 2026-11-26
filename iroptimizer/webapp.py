@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import __version__, abtest, dashboard
+from . import __version__, abtest, applog, dashboard
 
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
@@ -66,6 +66,9 @@ class Api:
                  powercfg: Callable | None = None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
+        applog.setup(self._out_dir)
+        applog.get().info("app start %s, results in %s", __version__, self._out_dir)
+        self._removed_empty = remove_empty_runs(self._bench_root)
         self._window = None
         self._job: Job | None = None
         self._lock = threading.Lock()
@@ -246,6 +249,7 @@ class Api:
             self._resumed = 0
             return v
         except Exception as e:
+            applog.get().exception("view failed")
             return {"error": f"Couldn't read the results: {e}", "trace": traceback.format_exc(limit=3)}
 
     def set_focus(self, value) -> dict:
@@ -270,9 +274,14 @@ class Api:
             logs = j.logs[since:]
             n = len(j.logs)
         el = time.time() - j.started
-        return {"test": j.test, "title": j.title, "state": j.state, "elapsed_s": el, "eta_s": j.eta_s,
+        return {"id": f"{j.started:.3f}", "test": j.test, "title": j.title, "state": j.state, "elapsed_s": el, "eta_s": j.eta_s,
                 "progress": min(0.99, el / j.eta_s) if j.state == "running" and j.eta_s else 1.0,
                 "logs": logs, "next": n, "prompt": j.prompt, "result": j.result}
+
+    def log_js(self, text) -> dict:
+        """Script errors from the window, so a UI problem leaves a trace in app.log."""
+        applog.get().warning("window: %s", str(text)[:2000])
+        return {"ok": True}
 
     def poll(self, since=0) -> dict:
         try:
@@ -385,6 +394,9 @@ class Api:
             from . import presentmon
             capture = lambda p: presentmon.Capture(exe, p)  # noqa: E731
 
+        log = applog.get()
+        log.info("test start: %s (%s), %d runs x %.0f s", test, job.title, cfg.runs, cfg.seconds)
+
         def run():
             try:
                 self._record_settings(reason="a test started")
@@ -393,16 +405,20 @@ class Api:
                 s = dashboard.load_bundle(bdir) or {}
                 lines = [c["verdict_text"] for c in s.get("comparisons") or []]
                 lines.append((s.get("repeatability") or {}).get("verdict_text", ""))
-                job.result = {"id": Path(bdir).name, "lines": [x for x in lines if x]}
+                job.result = {"id": Path(bdir).name, "lines": [x for x in lines if x],
+                              "verdicts": [c.get("verdict") for c in s.get("comparisons") or []]}
                 job.state = "done"
                 self._log(job, "Finished.")
+                log.info("test done: %s -> %s", job.result["id"], " | ".join(job.result["lines"]))
             except bench.Aborted:
                 job.state = "stopped"
                 self._log(job, "Stopped. Nothing was changed.")
+                log.info("test stopped")
             except Exception as e:
                 job.state = "error"
                 job.result = {"error": str(e)}
                 self._log(job, f"Error: {e}")
+                log.exception("test failed")
             finally:
                 job.prompt = None
         threading.Thread(target=run, daemon=True).start()
@@ -513,8 +529,10 @@ class Api:
             up.install(u["sha"], progress=lambda f: u.__setitem__("progress", f))
         except Exception as e:
             u["state"], u["error"] = "ready", str(e)
+            applog.get().exception("update failed")
             return {"ok": False, "error": f"Update failed, nothing was changed: {e}"}
         u["state"] = "done"
+        applog.get().info("update installed, restarting into %s", u.get("sha", "")[:12])
         if self._window is not None:
             threading.Timer(0.5, self._window.destroy).start()
         return {"ok": True}
@@ -582,6 +600,27 @@ class Api:
             return {"ok": True, "log": log}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+
+def remove_empty_runs(bench_root: Path) -> int:
+    """Deletes result folders a test left behind with nothing in them (it stopped before any frames were
+    saved): no bench.json and only empty files. Anything with data is kept."""
+    n = 0
+    if not Path(bench_root).is_dir():
+        return 0
+    import shutil
+    for d in Path(bench_root).iterdir():
+        try:
+            if not d.is_dir() or (d / "bench.json").exists():
+                continue
+            files = [f for f in d.rglob("*") if f.is_file()]
+            if all(f.stat().st_size == 0 for f in files) and time.time() - d.stat().st_mtime > 600:
+                shutil.rmtree(d)
+                n += 1
+                applog.get().info("removed empty result folder %s", d.name)
+        except OSError:
+            continue
+    return n
 
 
 def _stamp_when(name: str) -> str:

@@ -30,11 +30,13 @@ window.DEMO_API = {
     const j = {...job, elapsed_s: el * 30, progress: Math.min(.99, el * 30 / 720), next: 0,
       logs: [{t: "17:20:0" + Math.floor(el %% 10), text: "Run " + (1 + Math.floor(el / 2)) + "/11: measuring 60 s"}],
       prompt: job.title.includes("G-Sync") && el > 3 && !job.answered ? {id: "p1", title: "Set up B: G-Sync on", text: "The replay is paused. Change it, then press Done."} : null};
+    if (el > 6) { job.state = "done"; job.result = {id: "demo", verdicts: ["same"], lines: ["No meaningful difference: the change didn't move 1%% lows, frame-time spikes or stutters beyond run-to-run noise.", "Repeatable: runs agree within 1.5%%."]}; Object.assign(j, {state: "done", result: job.result, progress: 1}); }
     return {job: j}; },
   answer: async () => { job.answered = true; return {ok: true}; },
   stop: async () => { job.state = "stopped"; return {ok: true}; },
   update_status: async () => ({available: false, state: "current"}), update_install: async () => ({ok: false}), open_classic: async () => ({ok: true}), open_report: async () => ({ok: true}), open_results_folder: async () => ({ok: true}),
   relaunch_admin: async () => ({ok: true}), backup_now: async () => ({ok: true}), restore: async () => ({ok: true}),
+  log_js: async () => ({ok: true}), add_note: async () => ({ok: true}),
   audit: async () => { await sleep(600); return {ok: true, ...AUDIT}; },
 };
 })();

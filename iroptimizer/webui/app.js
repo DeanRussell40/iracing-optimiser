@@ -13,7 +13,11 @@ function toast(text, ok = false) {
 }
 async function call(name, ...args) {
   try { return await api[name](...args); }
-  catch (e) { toast("Something went wrong: " + (e && e.message || e)); return {ok: false}; }
+  catch (e) {
+    if (name !== "log_js") logJs(`call ${name} failed: ${e && e.message || e}`);
+    if (name !== "poll") toast("Something went wrong: " + (e && e.message || e));
+    return {ok: false, failed: true};
+  }
 }
 /** Modal dialog. Resolves true for OK, false for Cancel/Escape. */
 function dialog({title, html, ok = "OK", cancel = "Cancel", prompt = false}) {
@@ -212,8 +216,21 @@ async function startTest(test, extra = {}) {
   showJob({title: r.title, state: "running", progress: 0, elapsed_s: 0, eta_s: r.eta_min * 60, logs: []});
   poll();
 }
+let dismissedJob = null;
+const VERDICT = {better: "B is better", worse: "B is worse", mixed: "Mixed result", same: "No meaningful difference"};
+function showResult(j) {
+  const box = $("run-result");
+  if (j.state !== "done" || !j.result) { box.hidden = true; return; }
+  const v = (j.result.verdicts || [])[0];
+  $("run-verdict").textContent = v ? (VERDICT[v] || v) : "Measured";
+  $("run-lines").innerHTML = (j.result.lines || []).map(l => `<p>${esc(l)}</p>`).join("") || "<p>Finished.</p>";
+  $("run-report").dataset.id = j.result.id || "";
+  $("run-report").hidden = !j.result.id;
+  box.hidden = false;
+}
 function showJob(j, fromView = false) {
-  if (fromView && j.state !== "running") return;
+  // from a refresh: show a running job, or a finished one the user hasn't closed yet
+  if (fromView && j.state !== "running" && (j.state !== "done" || dismissedJob === j.id)) return;
   $("start-card").hidden = true; $("run-card").hidden = false;
   $("run-title").textContent = j.title;
   const pct = Math.round((j.progress || 0) * 100);
@@ -223,6 +240,8 @@ function showJob(j, fromView = false) {
   $("run-eta").textContent = running ? `${mins(j.elapsed_s)} of about ${mins(j.eta_s)}. Leave the PC alone unless the app asks you to switch something.`
     : {done: "Finished.", stopped: "Stopped. Nothing was changed.", error: "The test failed. See the last line below."}[j.state] || "";
   $("run-stop").hidden = !running; $("run-close").hidden = running;
+  $("run-card").dataset.job = j.id || "";
+  showResult(j);
   if (j.logs && j.logs.length) {
     const ul = $("run-log");
     ul.insertAdjacentHTML("beforeend", j.logs.map(l => `<li><span>${esc(l.t)}</span>${esc(l.text)}</li>`).join(""));
@@ -235,6 +254,10 @@ function showJob(j, fromView = false) {
 async function poll() {
   pollTimer = null;
   const r = await call("poll", logNext);
+  if (!r || r.failed || r.error) {  // keep following the test: one failed call mustn't lose it
+    pollTimer = setTimeout(poll, pollEvery());
+    return;
+  }
   const j = r && r.job;
   if (!j) return;
   showJob(j);
@@ -246,7 +269,8 @@ async function poll() {
   if (!j.prompt && lastPrompt && $("dlg").open && $("dlg").classList.contains("prompt")) { $("dlg").close(); lastPrompt = null; }
   if (j.state === "running") { pollTimer = setTimeout(poll, pollEvery()); return; }
   if (j.state === "done" && j.result) {
-    refresh().then(() => toast((j.result.lines || []).join(" ") || "Test finished.", true));
+    if (screen !== "tune") show("tune");
+    refresh().then(() => showJob(j));  // the result panel stays until Close
   }
 }
 // The app must not cost the sim CPU while it measures: slow polling, slower still when hidden behind iRacing.
@@ -290,7 +314,12 @@ function wire() {
   document.querySelectorAll("input[name=test]").forEach(r => r.addEventListener("change", () => { $("ab-names").hidden = chosenTest() !== "guided"; }));
   $("go-chosen").addEventListener("click", () => startTest(chosenTest()));
   $("run-stop").addEventListener("click", () => call("stop"));
-  $("run-close").addEventListener("click", () => { $("run-card").hidden = true; $("start-card").hidden = false; });
+  $("run-close").addEventListener("click", () => { dismissedJob = $("run-card").dataset.job; $("run-card").hidden = true; $("start-card").hidden = false; });
+  $("run-report").addEventListener("click", async () => {
+    const r = await call("open_report", $("run-report").dataset.id);
+    if (!r.ok) toast(r.error || "Couldn't open the report.");
+  });
+  $("run-results").addEventListener("click", () => show("results"));
   $("update-go").addEventListener("click", installUpdate);
   $("classic").addEventListener("click", async () => {
     const r = await call("open_classic");
@@ -344,6 +373,12 @@ function wire() {
   new ResizeObserver(() => { if (screen === "results") drawChart(); }).observe($("chart"));
 }
 
+function logJs(msg) { try { api && api.log_js(String(msg)); } catch (e) { /* nothing more to do */ } }
+document.addEventListener("visibilitychange", () => {  // back from iRacing: catch up at once
+  if (!document.hidden && pollTimer) { clearTimeout(pollTimer); poll(); }
+});
+window.addEventListener("error", e => logJs(`${e.message} at ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", e => logJs("unhandled: " + (e.reason && e.reason.stack || e.reason)));
 async function boot() {
   wire();
   if (location.search.includes("demo")) {
