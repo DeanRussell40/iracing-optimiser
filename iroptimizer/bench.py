@@ -417,12 +417,18 @@ def _settings_key(fp: dict) -> str | None:
         return None
 
 
-def _replay_mismatch(fp: dict) -> list[dict]:
+def _replay_mismatch(fp: dict, low1: float | None = None) -> list[dict]:
     from . import config_reader
     try:
-        return config_reader.replay_mismatch(fp.get("config") or {})
+        return config_reader.replay_mismatch(fp.get("config") or {}, low1)
     except Exception:
         return []
+
+
+def _median_low1(ms: list[dict]) -> float | None:
+    from statistics import median
+    vals = [m["low1_fps"] for m in ms if m.get("low1_fps") is not None]
+    return median(vals) if vals else None
 
 
 def analyze_bundle(bdir: Path) -> dict:
@@ -487,7 +493,8 @@ def analyze_bundle(bdir: Path) -> dict:
         "columns": info.get("columns"),
         "surface": surf,
         "settings_key": _settings_key(fp),
-        "replay_mismatch": _replay_mismatch(fp),
+        "replay_mismatch": _replay_mismatch(fp, _median_low1(per_variant[base])),
+        "mismatch_v2": True,
         "display": fp.get("hardware", {}).get("display"),
         "gpus": fp.get("hardware", {}).get("gpus"),
     }

@@ -317,7 +317,7 @@ def test_old_bundles_are_reanalysed(tmp_path):
     j = wait_done(api)
     d = tmp_path / "bench" / j["result"]["id"]
     s = json.loads((d / "summary.json").read_text(encoding="utf-8"))
-    for k in ("stutter_attribution", "settings_key", "replay_mismatch"):
+    for k in ("stutter_attribution", "settings_key", "replay_mismatch", "mismatch_v2"):
         s.pop(k)
     (d / "summary.json").write_text(json.dumps(s), encoding="utf-8")  # as an older build wrote it
     api2 = make_api(tmp_path)
@@ -342,7 +342,7 @@ def test_findings_follow_the_current_graphics_settings(tmp_path):
     assert v["headline"] == "Your graphics settings changed" and v["next"]["test"] == "auto"
     titles = [f["title"] for f in v["findings"]]
     assert "Your graphics settings changed since the last test" in titles
-    assert "Replay and race graphics differ" in titles
+    assert "Settings file: replay and race graphics differ" in titles
     assert all(r["value"] == "–" for r in v["readouts"])
 
 

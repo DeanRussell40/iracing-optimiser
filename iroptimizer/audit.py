@@ -345,24 +345,33 @@ HEAVY = ["MaxCarsToDraw", "DynamicShadowMaps", "ShadowMapType", "ShadowDetail", 
          "TextureQuality", "AnisotropicFiltering"]
 
 
-def iracing_items(snap: dict | None) -> list[dict]:
+def iracing_items(snap: dict | None, low1: float | None = None) -> list[dict]:
     A = "iRacing"
     if not snap:
         return [_item(A, "Graphics settings", None, "info", "The iRacing settings folder wasn't found.")]
-    from .config_reader import replay_mismatch
+    from .config_reader import replay_mismatch, view_toggle_diffs
     secs = {s.lower(): kv for s, kv in (snap.get("renderer") or {}).items()}
     race = {k.lower(): (k, v) for k, v in (secs.get("graphics options") or {}).items()}
     rep = {k.lower(): v for k, v in (secs.get("replay graphics") or {}).items()}
-    diff = {d["key"].lower() for d in replay_mismatch(snap)}
+    diff = {d["key"].lower() for d in replay_mismatch(snap, low1)}
     out = [_item(A, "Settings file", snap.get("renderer_file") or None, "info",
                  "The file iRacing reads its graphics from. It writes it when the sim closes.")]
     if diff:
-        it = _item(A, "Replay and race graphics differ", f"{len(diff)} setting{'s' if len(diff) != 1 else ''}", "warn",
-                   "Tests run on a replay, so they'd measure the replay values. If you already made them the same in "
-                   "the sim, iRacing hasn't saved them yet: it writes them when the sim closes. Close iRacing, then "
-                   "press Read again.")
+        it = _item(A, "Replay and race graphics differ (settings file)",
+                   f"{len(diff)} setting{'s' if len(diff) != 1 else ''}", "warn",
+                   "Read from iRacing's settings file. Tests run on a replay, so they'd measure the replay values. "
+                   "iRacing only writes Graphics menu changes to the file when it saves or exits: if the menu already "
+                   "matches, close iRacing, then press Read again. Differences that can't change a result (motion "
+                   "blur cameras with blur off, shadow trim with dynamic shadows off, an LOD target below your 1% "
+                   "low) are left out.")
         it["summary"] = True
         out.append(it)
+    toggles = view_toggle_diffs(snap)
+    if toggles:
+        out.append(_item(A, "Cockpit view toggles differ in replays",
+                         "; ".join(f"{d['key']} {d['race']} race, {d['replay']} replay" for d in toggles), "info",
+                         "Hide cockpit obstructions, driver hands and steering wheel aren't on the Graphics menu. "
+                         "They cost the graphics card only a little, so they don't count as a mismatch."))
     for key in HEAVY:
         if key.lower() not in race:
             continue
@@ -379,7 +388,8 @@ def iracing_items(snap: dict | None) -> list[dict]:
 
 # ---------------------------------------------------------------------------- everything
 
-def run(snapshot: Callable | None = None, windows: Callable = windows_items, nvidia: Callable = nvidia_items) -> dict:
+def run(snapshot: Callable | None = None, windows: Callable = windows_items, nvidia: Callable = nvidia_items,
+        low1: float | None = None) -> dict:
     items = []
     for part in (windows, nvidia):
         try:
@@ -390,7 +400,7 @@ def run(snapshot: Callable | None = None, windows: Callable = windows_items, nvi
         snap = snapshot() if snapshot else None
     except Exception:
         snap = None
-    items += iracing_items(snap)
+    items += iracing_items(snap, low1)
     rows = [i for i in items if not i.get("summary")]
     counts = {lv: sum(1 for i in rows if i["level"] == lv) for lv in ("bad", "warn", "test", "ok", "info")}
     counts["attention"] = counts["bad"] + counts["warn"]

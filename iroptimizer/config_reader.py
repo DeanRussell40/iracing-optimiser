@@ -120,17 +120,74 @@ def settings_key(snap: dict) -> str | None:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]  # nosec B324 (a fingerprint, not security)
 
 
-def replay_mismatch(snap: dict) -> list[dict]:
-    """Settings that differ between [Graphics Options] (racing) and [Replay Graphics] (what replays, and so every
-    test, run with). Only keys present in both are compared. iRacing writes the ini when the sim closes, so a
-    change made in the sim a moment ago may not be on disk yet."""
+VIEW_TOGGLES = ("HideCockpitObstructions", "DriverHands", "SteeringWheel")
+
+
+def _race_replay(snap: dict) -> tuple[dict, dict] | None:
     secs = {s.lower(): kv for s, kv in (snap.get("renderer") or {}).items()}
     race, rep = secs.get("graphics options"), secs.get("replay graphics")
     if not race or not rep:
+        return None
+    return ({k.lower(): (k, v.strip()) for k, v in race.items()}, {k.lower(): (k, v.strip()) for k, v in rep.items()})
+
+
+def _num(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _raw_diffs(snap: dict) -> list[dict]:
+    rr = _race_replay(snap)
+    if not rr:
         return []
-    by_key = {k.lower(): v for k, v in race.items()}
-    return [{"key": k, "race": by_key[k.lower()].strip(), "replay": v.strip()}
-            for k, v in rep.items() if k.lower() in by_key and by_key[k.lower()].strip() != v.strip()]
+    race, rep = rr
+    return [{"key": rep[k][0], "race": race[k][1], "replay": rep[k][1]}
+            for k in rep if k in race and race[k][1] != rep[k][1]]
+
+
+def replay_mismatch(snap: dict, low1: float | None = None) -> list[dict]:
+    """Settings that differ between [Graphics Options] (racing) and [Replay Graphics] (what replays, and so every
+    test, run with) and that can change what a test measures. Only keys present in both are compared.
+
+    Differences that can't matter are left out: motion-blur camera switches when motion blur strength is 0 on both
+    sides, shadow trim when dynamic shadows are off on both, and the LOD frame-rate target when the measured 1% low
+    is above both targets (so LOD never kicks in). The cockpit view toggles are reported by view_toggle_diffs()
+    instead. This reads the ini, which iRacing only writes when it saves or exits."""
+    rr = _race_replay(snap)
+    if not rr:
+        return []
+    race, rep = rr
+
+    def both(key: str, test) -> bool:
+        a, b = race.get(key.lower()), rep.get(key.lower())
+        return a is not None and b is not None and test(a[1]) and test(b[1])
+
+    zero = lambda v: _num(v) == 0  # noqa: E731
+    out = []
+    for d in _raw_diffs(snap):
+        k = d["key"].lower()
+        if k in {t.lower() for t in VIEW_TOGGLES}:
+            continue
+        if k.startswith("motionblur") and k != "motionblurstrength" and both("MotionBlurStrength", zero):
+            continue
+        if k == "dynamicshadowtrim" and both("DynamicShadowMaps", zero):
+            continue
+        if k == "lodminfpstarget" and low1 is not None:
+            targets = [_num(d["race"]), _num(d["replay"])]
+            if all(t is not None for t in targets) and low1 > max(targets):
+                continue
+        out.append(d)
+    return out
+
+
+def view_toggle_diffs(snap: dict) -> list[dict]:
+    """Cockpit view toggles (hide obstructions, driver hands, steering wheel) that differ between race and replay.
+    They aren't on the Graphics menu and cost the GPU only a little, so they're reported apart from real
+    mismatches."""
+    names = {t.lower() for t in VIEW_TOGGLES}
+    return [d for d in _raw_diffs(snap) if d["key"].lower() in names]
 
 
 def mismatch_text(diffs: list[dict], limit: int = 6) -> str:
@@ -138,7 +195,7 @@ def mismatch_text(diffs: list[dict], limit: int = 6) -> str:
         return ""
     shown = "; ".join(f"{d['key']} {d['race']} in races, {d['replay']} in replays" for d in diffs[:limit])
     more = f" and {len(diffs) - limit} more" if len(diffs) > limit else ""
-    return (f"Your replay graphics differ from your race graphics: {shown}{more}. Tests run on a replay, so the "
-            "results would describe settings you don't race with. Make them the same in iRacing's graphics options. "
-            "iRacing saves them to its settings file when the sim closes, so if you already did, close the sim "
-            "once and reopen it.")
+    return (f"iRacing's settings file shows replay graphics that differ from race graphics: {shown}{more}. Tests "
+            "run on a replay, so the results would describe settings you don't race with. This is read from the "
+            "file, and iRacing only writes menu changes to it when it saves or exits: if the Graphics menu already "
+            "matches, close the sim once so it saves, then check again.")

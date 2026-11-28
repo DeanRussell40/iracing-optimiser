@@ -157,7 +157,7 @@ class Api:
         for d in self._bench_root.iterdir():
             try:
                 sj = d / "summary.json"
-                if (d / "bench.json").is_file() and (not sj.is_file() or b'"replay_mismatch"' not in sj.read_bytes()):
+                if (d / "bench.json").is_file() and (not sj.is_file() or b'"mismatch_v2"' not in sj.read_bytes()):
                     bench.analyze_bundle(d)
             except Exception:
                 continue
@@ -186,7 +186,8 @@ class Api:
         if not snap:
             return None, None
         try:
-            return config_reader.settings_key(snap), config_reader.mismatch_text(config_reader.replay_mismatch(snap)) or None
+            diffs = config_reader.replay_mismatch(snap, self._last_low1())
+            return config_reader.settings_key(snap), config_reader.mismatch_text(diffs) or None
         except Exception:
             return None, None
 
@@ -194,7 +195,7 @@ class Api:
         """Reads every Windows, NVIDIA and iRacing setting worth knowing. Read only."""
         try:
             from . import audit
-            kw = {"snapshot": self._snapshot}
+            kw = {"snapshot": self._snapshot, "low1": self._last_low1()}
             if self._audit_parts:
                 kw.update(self._audit_parts)
             r = audit.run(**kw)
@@ -221,6 +222,17 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _last_low1(self) -> float | None:
+        """The latest measured 1% low, to tell whether iRacing's LOD frame-rate target could ever kick in."""
+        try:
+            hist = dashboard.load_history(self._bench_root)
+            if not hist:
+                return None
+            b = hist[-1]
+            return b["per_variant"][b["variants"][0]].get("low1_fps")
+        except Exception:
+            return None
 
     def _simhub_capture(self) -> bool | None:
         try:
