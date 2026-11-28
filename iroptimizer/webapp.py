@@ -542,6 +542,7 @@ class Api:
         log.info("test start: %s (%s), %d runs x %.0f s", test, job.title, cfg.runs, cfg.seconds)
 
         def run():
+            final = "error"  # the window shows the end only after the settings are put back
             try:
                 self._record_settings(reason="a test started")
                 bdir = run_bench(cfg, self._out_dir, driver, capture, log=lambda s: self._log(job, s), stop=job.stop,
@@ -571,15 +572,15 @@ class Api:
                     self._save_floor(fv)
                 job.result = {"id": Path(bdir).name, "lines": [x for x in lines if x],
                               "verdicts": [c.get("verdict") for c in s.get("comparisons") or []]}
-                job.state = "done"
+                final = "done"
                 self._log(job, "Finished.")
                 log.info("test done: %s -> %s", job.result["id"], " | ".join(job.result["lines"]))
             except bench.Aborted:
-                job.state = "stopped"
+                final = "stopped"
                 self._log(job, "Stopped. Nothing was changed.")
                 log.info("test stopped")
             except Exception as e:
-                job.state = "error"
+                final = "error"
                 job.result = {"error": str(e)}
                 self._log(job, f"Error: {e}")
                 log.exception("test failed")
@@ -593,6 +594,7 @@ class Api:
                                        "at its next start.")
                         log.exception("ini restore failed")
                 job.ended = time.time()
+                job.state = final
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True, "eta_min": round(job.eta_s / 60, 1), "title": job.title}
 
