@@ -13,6 +13,7 @@ from __future__ import annotations
 PER_LOAD = 3
 CYCLES = 2
 MAX_CANDIDATES = 8
+CARS_UP_TO = 28  # about the field in the test replay; 64 is the sim's maximum
 
 
 def _int(flat: dict, key: str) -> int | None:
@@ -54,6 +55,11 @@ def candidates(flat: dict) -> list[tuple[str, dict]]:
         pair["CrowdDetail"] = str(cr - 1)
     if pair:
         out.append(("Grandstands and crowd one step lower", pair))
+    # The one step up worth measuring: iRacing draws at most MaxCarsToDraw cars per view, and a race start can
+    # have more cars than that in sight. Raising it is a quality gain, so the ranking shows what it would cost.
+    mc = _int(flat, "MaxCarsToDraw")
+    if mc is not None and mc < CARS_UP_TO:
+        out.insert(0, (f"Cars drawn {mc} to {CARS_UP_TO}", {"MaxCarsToDraw": str(CARS_UP_TO)}))
     return out[:MAX_CANDIDATES]
 
 
@@ -80,6 +86,8 @@ def lines(rows: list[dict]) -> list[str]:
             out.append(f"{r['name']}: +{g:.0f} FPS on the 1% low (a real gain).")
         elif g is None:
             out.append(f"{r['name']}: not enough valid runs to tell.")
+        elif r["verdict"] == "worse":
+            out.append(f"{r['name']}: costs {abs(g):.0f} FPS on the 1% low.")
         else:
             out.append(f"{r['name']}: no measurable difference ({g:+.0f} FPS is within the noise), so it can stay.")
     return out

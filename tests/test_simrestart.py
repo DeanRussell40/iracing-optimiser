@@ -262,3 +262,11 @@ def test_cost_ranking_restores_between_candidates_and_at_the_end(tmp_path):
         assert changed <= 2  # a setting and its replay copy
     assert f.read_text(encoding="utf-8") == FULL
     assert (tmp_path / "cost_rank.json").is_file()
+
+
+def test_cars_drawn_up_is_measured_and_reported_as_a_cost():
+    c = costrank.candidates({"maxcarstodraw": "20", "antialiasmethod": "1", "msaasamples": "4"})
+    assert c[0] == ("Cars drawn 20 to 28", {"MaxCarsToDraw": "28"})
+    rows = costrank.rank([{"variant": "Cars drawn 20 to 28", "verdict": "worse",
+                           "metrics": {"low1_fps": {"a": 98, "b": 90}}}], {})
+    assert costrank.lines(rows) == ["Cars drawn 20 to 28: costs 8 FPS on the 1% low."]
