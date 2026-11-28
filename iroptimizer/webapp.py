@@ -22,7 +22,7 @@ from . import __version__, abtest, applog, dashboard
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
-TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics", "floorprobe", "costrank")
+TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics", "floorprobe", "costrank", "pick")
 REOPEN_TIMEOUT_S = 900.0
 AFTER_LOAD_S = 10.0  # the sim is still streaming the track when the SDK first shows the replay
 
@@ -58,6 +58,7 @@ class Job:
     cleanup: Callable[[], None] | None = None
     floor: float = 120.0
     rank_names: dict = field(default_factory=dict)
+    pick: dict = field(default_factory=dict)
 
 
 class Api:
@@ -471,6 +472,65 @@ class Api:
                 job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
                 job.title = (f"Floor check: can graphics reach {job.floor:.0f} FPS?" if test == "floorprobe"
                              else f"{b_name} vs your settings")
+        elif test == "pick":
+            import dataclasses
+            from . import apply as applier, config_reader, costrank, floors, iniswitch, picker
+            sim = self._sim_ctl
+            if sim is None:
+                from . import simctl as sim
+            try:
+                fc = json.loads((self._out_dir / "floor_check.json").read_text(encoding="utf-8"))
+                cr = json.loads((self._out_dir / "cost_rank.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {"ok": False, "error": "Run the Graphics floor check and What costs the most frames first: "
+                                              "the picker works from their results."}
+            try:
+                cfgi = config_reader.load(str(self._ini_dir()) if self._ini_dir else None)
+            except Exception as e:
+                return {"ok": False, "error": f"Couldn't read iRacing's settings: {e}"}
+            if not cfgi.renderer:
+                return {"ok": False, "error": "iRacing's graphics settings file wasn't found."}
+            if cfgi.renderer.get("DesiredFPSLimit") is None or cfgi.renderer.get("LimitFrameRate") is None:
+                return {"ok": False, "error": "iRacing's frame limiter isn't in its settings file, so the cap "
+                                              "options can't be tested."}
+            pref = float(fc.get("floor") or floors.DEFAULT_FLOOR)
+            ch = picker.choose(fc, cr.get("rows") or [], pref)
+            lowered = ch["changes"]
+            low_only = bool(lowered) and all(k in picker.LOW_PRIORITY for k in lowered)
+            q_pick = 10 - len(ch["lowered"])
+            base = "Picked settings" if lowered else "Your settings"
+            opts_list = [{"name": "Your settings", "changes": {}, "quality": 10, "capped": False,
+                          "low_priority_only": False}]
+            if lowered:
+                opts_list.append({"name": "Picked settings", "changes": dict(lowered), "quality": q_pick,
+                                  "capped": False, "low_priority_only": low_only})
+            opts_list += [
+                {"name": f"{base}, {picker.CAP_HIGH} cap", "changes": {**lowered, **picker.cap_changes(picker.CAP_HIGH)},
+                 "quality": q_pick if lowered else 10, "capped": True, "cap": picker.CAP_HIGH,
+                 "low_priority_only": low_only},
+                {"name": f"Your settings, {picker.CAP_LOW} cap", "changes": picker.cap_changes(picker.CAP_LOW),
+                 "quality": 10, "capped": True, "cap": picker.CAP_LOW, "low_priority_only": False}]
+            cfg = dataclasses.replace(cfg, runs=costrank.PER_LOAD * costrank.CYCLES, warmup_runs=0,
+                                      per_load=costrank.PER_LOAD)
+            sw = iniswitch.IniSwitch(self._out_dir, cfgi.renderer.path, **({"running": self._sim_running}
+                                                                          if self._sim_running else {}),
+                                     backup=lambda: applier.backup(cfgi.directory, "before_test"))
+
+            def to_opt(c: dict):
+                def f():
+                    self._close_sim(job, driver, sim)
+                    sw.restore()
+                    if c:
+                        sw.set(c)
+                        self._log(job, "Changed: " + ", ".join(f"{k}={v}" for k, v in c.items()))
+                    self._reopen_sim(job, driver, sim)
+                return f
+            variants = [bench.Variant(o["name"], settle_runs=1, apply=to_opt(o["changes"]),
+                                      description=", ".join(f"{k}={v}" for k, v in o["changes"].items()))
+                        for o in opts_list]
+            job.pick = {"options": opts_list, "choice": ch, "preferred": pref}
+            job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
+            job.title = "Pick: smooth first, then looks, then FPS"
         elif test == "costrank":
             import dataclasses
             from . import apply as applier, config_reader, costrank, iniswitch
@@ -525,7 +585,7 @@ class Api:
             job.title = f"{b} vs {a}"
         n = cfg.runs * (len(variants) if variants else 1) + cfg.warmup_runs
         job.eta_s = n * (cfg.seconds + cfg.settle_s + 2)
-        if test in ("restart", "graphics", "floorprobe", "costrank"):
+        if test in ("restart", "graphics", "floorprobe", "costrank", "pick"):
             plan = bench.schedule(variants, cfg.runs, cfg.warmup_runs, cfg.per_load)
             switches = sum(1 for k, (vi, _w) in enumerate(plan) if k == 0 or plan[k - 1][0] != vi)
             job.eta_s += switches * (90 + cfg.seconds + cfg.settle_s)  # restart, reload, one settling run
@@ -550,6 +610,25 @@ class Api:
                 s = dashboard.load_bundle(bdir) or {}
                 lines = [c["verdict_text"] for c in s.get("comparisons") or []]
                 lines.append((s.get("repeatability") or {}).get("verdict_text", ""))
+                if test == "pick":
+                    from . import floors, picker
+                    try:
+                        full = json.loads((Path(bdir) / "summary.json").read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        full = {}
+                    pv: dict = {}
+                    for r in full.get("runs") or []:
+                        w, m = r.get("window") or {}, r.get("metrics") or {}
+                        if not w.get("warmup") and w.get("valid", True) and m:
+                            pv.setdefault(w.get("variant"), []).append(m)
+                    res = picker.judge(job.pick["options"], pv, job.pick["preferred"])
+                    lines = [res["text"], job.pick["choice"]["reason"]] + [picker.row_line(r) for r in res["rows"]]
+                    try:
+                        (self._out_dir / "pick.json").write_text(json.dumps(
+                            {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), **res, "choice": job.pick["choice"]},
+                            default=str), encoding="utf-8")
+                    except OSError:
+                        pass
                 if test == "costrank":
                     from . import costrank
                     rows = costrank.rank(s.get("comparisons") or [], job.rank_names)
