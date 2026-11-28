@@ -175,3 +175,33 @@ def test_start_point_is_saved_and_used_after_a_fresh_open(tmp_path):
     assert bench.start_point(p, D(), 300_000, other) == (300_000, other)  # placed somewhere new: that wins
     assert bench.start_point(p, D("1"), 12, other) == (12, other)  # another replay: nothing saved
     assert bench.start_point(p, object(), 12, other) == (12, other)  # driver can't tell the replay
+
+
+# ---------------------------------------------------------------- Tests tab steps
+
+def test_tests_tab_steps_in_order_with_status(tmp_path):
+    api = make_api(tmp_path, sim_ctl=FakeSim(None), sim_running=lambda: False, reopener=FakeReopener(False))
+    p = api.view()["picker"]
+    assert [s["test"] for s in p["steps"]] == ["restart", "floorprobe", "costrank", "pick"]
+    assert p["next"] == "restart" and all(s["status"] == "not_run" for s in p["steps"])
+    assert "1:32" in p["steps"][0]["needs"] and "click Watch" in p["steps"][1]["needs"]
+    (tmp_path / "restart_check.json").write_text(json.dumps({"t": "2026-11-28T20:00:00", "passed": False,
+                                                             "text": "Failed: B is worse."}))
+    p = api.view()["picker"]
+    assert p["steps"][0]["status"] == "failed" and p["next"] == "restart" and "can't be trusted" in p["warn"]
+    (tmp_path / "restart_check.json").write_text(json.dumps({"t": "2026-11-28T20:00:00", "passed": True, "text": "ok"}))
+    api._reopener = FakeReopener(True)
+    api._last_fail = {"floorprobe": {"t": "2026-11-28T21:00:00", "text": "Failed: boom"}}
+    p = api.view()["picker"]
+    assert p["steps"][0]["status"] == "passed" and p["steps"][1]["status"] == "failed" and p["next"] == "floorprobe"
+    assert "automatic" in p["steps"][1]["needs"] and not p["warn"]
+
+
+def test_restart_check_saves_pass_or_fail(tmp_path):
+    f = ini_dir(tmp_path) / "rendererDX11Monitor.ini"
+    sim = FakeSim(f)
+    api = make_api(tmp_path, sim_ctl=sim, sim_running=lambda: sim.running, reopener=FakeReopener(True))
+    assert api.start("restart", {"seconds": 0.2, "runs": 3, "warmup": 0})["ok"]
+    assert wait_done(api)["state"] == "done"
+    rc = json.loads((tmp_path / "restart_check.json").read_text())
+    assert rc["text"].startswith(("Passed", "Failed")) and api.view()["picker"]["steps"][0]["status"] in ("passed", "failed")

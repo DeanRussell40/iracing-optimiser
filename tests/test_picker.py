@@ -109,7 +109,8 @@ def _pick_file(tmp_path, changes):
 def test_view_shows_picker_steps_and_next(tmp_path):
     api = make_api(tmp_path)
     p = api.view()["picker"]
-    assert [s["test"] for s in p["steps"]] == ["floorprobe", "costrank", "pick"] and p["next"] == "floorprobe"
+    assert [s["test"] for s in p["steps"]] == ["restart", "floorprobe", "costrank", "pick"] and p["next"] == "restart"
+    (tmp_path / "restart_check.json").write_text(json.dumps({"passed": True, "text": "Passed."}))
     (tmp_path / "floor_check.json").write_text(json.dumps({"text": "120 is reachable."}))
     assert api.view()["picker"]["next"] == "costrank"
 

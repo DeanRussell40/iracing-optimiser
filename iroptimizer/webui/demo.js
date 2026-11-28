@@ -142,33 +142,52 @@ const VIEW = {
  "notice": "",
  "picker": {
   "min_fps": 120,
-  "next": "pick",
-  "pick": {
-   "name": "Your settings, 80 cap",
-   "applied": false,
-   "text": "Pick: Your settings, 80 cap (80 FPS, smooth). It's under 120. Before keeping it, drive a few laps on it and on the best 120 option, and choose by feel.",
-   "changes": {}
-  },
   "steps": [
+   {
+    "test": "restart",
+    "label": "Sim restart check",
+    "about": "Closes iRacing and reopens the same replay between runs, and checks a restart alone doesn't change the numbers. The other three rely on that.",
+    "takes": "About 20 minutes, 4 reopens.",
+    "needs": "Open your test replay in iRacing and pause it (a fresh open jumps to your saved spot by itself). At the first reopen, click Watch in iRacing once; the app learns it and does the rest.",
+    "status": "passed",
+    "result": "Passed: a restart alone doesn't change the numbers.",
+    "done": true
+   },
    {
     "test": "floorprobe",
     "label": "Graphics floor check",
-    "done": true,
-    "result": "Graphics alone can't reach 120 FPS on this replay: even the lowest settings only hold a 1% low of 108 (yours 98)."
+    "about": "Your graphics against the lowest. Shows whether graphics alone can reach your frame rate, or whether the CPU or the sim is the limit.",
+    "takes": "About 25 minutes, 6 reopens.",
+    "needs": "Open your test replay in iRacing and pause it (a fresh open jumps to your saved spot by itself). At the first reopen, click Watch in iRacing once; the app learns it and does the rest.",
+    "status": "done",
+    "result": "120 FPS is reachable with graphics: lowest settings hold a 1% low of 141, yours 98.",
+    "done": true
    },
    {
     "test": "costrank",
     "label": "What costs the most frames",
-    "done": true,
-    "result": "MSAA 4x to 2x (real gain) Shadows off (real gain) Car detail one step lower"
+    "about": "Lowers each graphics setting one step, one at a time, and ranks them by frames gained.",
+    "takes": "About 1.5 hours, around 17 reopens.",
+    "needs": "Open your test replay in iRacing and pause it (a fresh open jumps to your saved spot by itself). At the first reopen, click Watch in iRacing once; the app learns it and does the rest.",
+    "status": "not_run",
+    "result": "",
+    "done": false
    },
    {
     "test": "pick",
     "label": "Pick my graphics",
-    "done": false,
-    "result": ""
+    "about": "Tests the picked settings, a 120 cap and an 80 cap against yours, and picks the smoothest, best-looking one.",
+    "takes": "About 45 minutes, 7 reopens.",
+    "needs": "Open your test replay in iRacing and pause it (a fresh open jumps to your saved spot by itself). At the first reopen, click Watch in iRacing once; the app learns it and does the rest. Afterwards, close iRacing and press Apply.",
+    "status": "not_run",
+    "result": "",
+    "done": false
    }
-  ]
+  ],
+  "pick": null,
+  "next": "costrank",
+  "warn": "",
+  "running": false
  },
  "backups": {
   "available": true,

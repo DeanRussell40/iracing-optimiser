@@ -291,26 +291,78 @@ class Api:
         except (OSError, ValueError):
             return None
 
+    STEP_INFO = {
+        "restart": ("Sim restart check",
+                    "Closes iRacing and reopens the same replay between runs, and checks a restart alone doesn't "
+                    "change the numbers. The other three rely on that.", "About 20 minutes, 4 reopens."),
+        "floorprobe": ("Graphics floor check",
+                       "Your graphics against the lowest. Shows whether graphics alone can reach your frame rate, or "
+                       "whether the CPU or the sim is the limit.", "About 25 minutes, 6 reopens."),
+        "costrank": ("What costs the most frames",
+                     "Lowers each graphics setting one step, one at a time, and ranks them by frames gained.",
+                     "About 1.5 hours, around 17 reopens."),
+        "pick": ("Pick my graphics",
+                 "Tests the picked settings, a 120 cap and an 80 cap against yours, and picks the smoothest, "
+                 "best-looking one.", "About 45 minutes, 7 reopens."),
+    }
+
     def _picker_state(self) -> dict:
-        """Where the user is in restart check, floor check, cost ranking, pick, and the latest pick."""
+        """The graphics tests in order (restart check, floor check, cost ranking, pick): each one's status, what it
+        needs from the user, and the latest pick."""
         from . import floors
         pref = self._settings().get("min_fps", floors.DEFAULT_FLOOR)
-        fc, cr, pk = (self._read_json(n) for n in ("floor_check.json", "cost_rank.json", "pick.json"))
-        steps = [
-            {"test": "floorprobe", "label": "Graphics floor check", "done": bool(fc),
-             "result": (fc or {}).get("text", "")},
-            {"test": "costrank", "label": "What costs the most frames", "done": bool(cr),
-             "result": " ".join(r.get("name", "") + (" (real gain)" if r.get("real") else "")
-                                for r in (cr or {}).get("rows", [])[:3])},
-            {"test": "pick", "label": "Pick my graphics", "done": bool(pk), "result": (pk or {}).get("text", "")},
-        ]
+        rc, fc, cr, pk = (self._read_json(n) for n in ("restart_check.json", "floor_check.json", "cost_rank.json",
+                                                         "pick.json"))
+        try:
+            learned = bool(self._reopener and self._reopener.has_recipe())
+        except Exception:
+            learned = False
+        click = ("Reopening is automatic." if learned else
+                 "At the first reopen, click Watch in iRacing once; the app learns it and does the rest.")
+        open_replay = ("Open your test replay in iRacing and pause it (a fresh open jumps to your saved spot by "
+                       "itself). ")
+        results = {
+            "restart": (rc, ((rc or {}).get("text", ""))),
+            "floorprobe": (fc, (fc or {}).get("text", "")),
+            "costrank": (cr, " ".join(r.get("name", "") + (" (real gain)" if r.get("real") else "")
+                                      for r in (cr or {}).get("rows", [])[:3])),
+            "pick": (pk, (pk or {}).get("text", "")),
+        }
+        fails = getattr(self, "_last_fail", {})
+        j = self._job
+        steps = []
+        for test, (label, about, takes) in self.STEP_INFO.items():
+            data, result = results[test]
+            if j and j.state == "running" and j.test == test:
+                status = "running"
+            elif test in fails and (not data or fails[test]["t"] > str(data.get("t", ""))):
+                status, result = "failed", fails[test]["text"]
+            elif not data:
+                status = "not_run"
+            elif test == "restart":
+                status = "passed" if data.get("passed") else "failed"
+            else:
+                status = "done"
+            needs = open_replay + click
+            if test == "restart" and not (self._read_json("start_points.json") or {}):
+                needs = ("Open your test replay, go to the spot the tests should start from (yours: race "
+                         "session, 1:32), pick the car and camera and pause. The app saves that spot. " + click)
+            if test == "pick":
+                needs += " Afterwards, close iRacing and press Apply."
+            steps.append({"test": test, "label": label, "about": about, "takes": takes, "needs": needs,
+                          "status": status, "result": result, "done": status in ("passed", "done")})
         pick = None
         if pk and pk.get("pick"):
             row = next((r for r in pk.get("rows") or [] if r.get("name") == pk["pick"]), {})
             pick = {"name": pk["pick"], "text": pk.get("text", ""), "changes": row.get("changes") or {},
                     "applied": bool(pk.get("applied")), "t": pk.get("t", "")}
-        return {"min_fps": pref, "steps": steps, "pick": pick,
-                "next": next((s_["test"] for s_ in steps if not s_["done"]), None)}
+        nxt = next((s_["test"] for s_ in steps if s_["status"] in ("not_run", "failed")), None)
+        warn = ""
+        if steps[0]["status"] == "failed" and rc:
+            warn = ("The restart check found a restart alone changes the numbers, so the graphics tests below "
+                    "can't be trusted yet. Run it again; if it fails twice, tell Claude.")
+        return {"min_fps": pref, "steps": steps, "pick": pick, "next": nxt, "warn": warn,
+                "running": bool(j and j.state == "running")}
 
     def set_min_fps(self, value) -> dict:
         try:
@@ -729,6 +781,18 @@ class Api:
                             json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "rows": rows}), encoding="utf-8")
                     except OSError:
                         pass
+                if test == "restart":
+                    c = (s.get("comparisons") or [{}])[0]
+                    ok = c.get("verdict") == "same"
+                    txt = ("Passed: a restart alone doesn't change the numbers." if ok else
+                           f"Failed: {c.get('verdict_text') or 'the before and after runs differ'}.")
+                    lines.insert(0, txt)
+                    try:
+                        (self._out_dir / "restart_check.json").write_text(json.dumps(
+                            {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "passed": ok, "text": txt,
+                             "verdict": c.get("verdict")}), encoding="utf-8")
+                    except OSError:
+                        pass
                 if test == "floorprobe":
                     from . import floors
                     try:
@@ -764,6 +828,10 @@ class Api:
                                        "at its next start.")
                         log.exception("ini restore failed")
                 job.ended = time.time()
+                if final == "error":
+                    self._last_fail = {**getattr(self, "_last_fail", {}), test: {
+                        "t": time.strftime("%Y-%m-%dT%H:%M:%S"), "text": "Failed: " + str((job.result or {}).get(
+                            "error", "see the test log"))}}
                 job.state = final
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True, "eta_min": round(job.eta_s / 60, 1), "title": job.title}

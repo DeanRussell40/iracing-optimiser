@@ -8,6 +8,7 @@
 <nav class="rail" aria-label="Screens">
  <div class="brand">iRacing <span>Optimiser</span><small id="version-top"></small></div>
  <button class="nav" data-screen="tune" aria-current="true">Tune</button>
+ <button class="nav" data-screen="testsview" aria-current="false">Tests</button>
  <button class="nav" data-screen="audit" aria-current="false">Audit</button>
  <button class="nav" data-screen="results" aria-current="false">Results</button>
  <button class="nav" data-screen="backups" aria-current="false">Backups</button>
@@ -22,56 +23,36 @@
  <p class="sub" id="subtitle">Loading…</p>
  <div class="read" id="readouts"></div>
  <div class="tune">
-  <div class="card" id="picker-card">
-   <h2>Your graphics: smooth first, then looks, then FPS</h2>
-   <p class="lock">Smoothness is pass/fail: an option must hold its frame rate with no extra stutters, or it's out.</p>
-   <label class="minfps">Frame rate you'd like<input id="min-fps" type="number" min="30" max="240" step="10" value="120"> FPS</label>
-   <p class="hint">A preference, not a must: a smooth lower frame rate with better looks can still win, and then you drive both before choosing.</p>
-   <ol class="steps" id="picker-steps"></ol>
-   <div id="picker-pick" hidden>
-    <p><b id="pick-name"></b> <span id="pick-text"></span></p>
-    <button class="btn small" id="pick-apply">Apply to iRacing</button>
-   </div>
-   <button class="ghost" id="picker-next" hidden></button>
-  </div>
-
   <div class="card start" id="start-card">
    <div>
-    <h2>Find improvements</h2>
+    <h2>Measure my PC</h2>
     <ol class="steps"><li>Open a race replay in iRacing, pick the car and camera, and pause it where the test should start.</li>
-     <li>Turn off frame rate caps for a plain measurement.</li><li>Press the button, then leave the PC alone.</li></ol>
+     <li>Press the button, then leave the PC alone.</li></ol>
    </div>
    <div>
     <button class="btn" id="go">Measure my PC</button>
     <p class="why" id="go-why"></p>
-    <button class="link" id="other-tests" aria-expanded="false" aria-controls="tests-box">Choose a different test</button>
-   </div>
-   <div id="tests-box" class="tests-box" hidden>
-    <fieldset><legend>Test</legend>
-     <label class="opt"><input type="radio" name="test" value="repeat" checked> <span><b>Measure my PC</b> The same replay several times, changing nothing.</span></label>
-     <label class="opt"><input type="radio" name="test" value="background"> <span><b>Background apps: running vs paused</b> Finds busy apps, pauses them for half the runs and compares.</span></label>
-     <label class="opt"><input type="radio" name="test" value="restart"> <span><b>Sim restart check</b> Closes iRacing between sides and you reopen the same saved replay. Proves a restart doesn't change the result, before graphics tests rely on it.</span></label>
-     <label class="opt"><input type="radio" name="test" value="floorprobe"> <span><b>Graphics floor check</b> Your graphics vs the lowest, with a restart between sides. Shows whether graphics alone can reach 120 FPS, or whether the CPU or sim is the limit.</span></label>
-     <label class="opt"><input type="radio" name="test" value="costrank"> <span><b>What costs the most frames</b> Lowers each graphics setting one step, one at a time, and ranks them by frames gained. About 1.5 hours and around 15 replay reopens.</span></label>
-     <label class="opt"><input type="radio" name="test" value="pick"> <span><b>Pick my graphics</b> Uses the floor check and the cost ranking: tests the picked settings, a 120 cap and an 80 cap against yours, and picks the smoothest, best-looking one. About 45 minutes and 7 replay reopens.</span></label>
-     <label class="opt"><input type="radio" name="test" value="guided"> <span><b>Something you switch yourself</b> The app tells you when to change it, for example G-Sync.</span></label>
-    </fieldset>
-    <div class="ab" id="ab-names" hidden>
-     <label>A, what you have now<input id="ab-a" value="G-Sync off" maxlength="60"></label>
-     <label>B, what to try<input id="ab-b" value="G-Sync on" maxlength="60"></label>
-    </div>
-    <details><summary>Test length</summary>
-     <div class="len">
-      <label>Seconds per run<input id="len-seconds" type="number" min="10" max="600" step="5" value="60"></label>
-      <label>Runs (per side)<input id="len-runs" type="number" min="3" max="20" value="5"></label>
-      <label>Warm-up runs<input id="len-warmup" type="number" min="0" max="3" value="1"></label>
-     </div>
-    </details>
-    <button class="btn small" id="go-chosen">Start this test</button>
    </div>
   </div>
+  <div class="card start">
+   <div>
+    <h2>Graphics tests</h2>
+    <p class="why" id="tune-steps-line">Four tests, in order, that find the smoothest, best-looking graphics for this PC.</p>
+   </div>
+   <button class="btn small" id="to-tests">Open the Tests tab</button>
+  </div>
+ </div>
+ <h2>Found on your PC</h2>
+ <ul class="find" id="finds"></ul>
+</section>
 
-  <div class="card run" id="run-card" hidden>
+<section id="testsview" hidden>
+ <h1>Graphics tests</h1>
+ <p class="sub">Run them in order, one at a time. Each one closes and reopens iRacing by itself, so you can leave the PC once it's going.</p>
+ <label class="minfps">Frame rate you'd like<input id="min-fps" type="number" min="30" max="240" step="10" value="120"> FPS</label>
+ <p class="hint">A preference, not a must: a smooth lower frame rate with better looks can still win, and then you drive both before choosing.</p>
+ <div id="steps-warn" class="alert" hidden></div>
+ <div class="card run" id="run-card" hidden>
    <h2 id="run-title"></h2>
    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="run-bar"><i></i></div>
    <p class="why" id="run-eta"></p>
@@ -83,9 +64,25 @@
    <ul class="log" id="run-log" aria-live="polite"></ul>
    <div class="row"><button class="ghost" id="run-stop">Stop</button><button class="ghost" id="run-close" hidden>Close</button></div>
   </div>
+ <ol class="stepcards" id="stepcards"></ol>
+ <h2 class="other-h">Other tests</h2>
+ <div class="others">
+  <div class="card other"><h3>Measure my PC</h3><p class="why">The same replay several times, changing nothing. Shows how steady this PC is.</p><button class="ghost" data-start="repeat">Start</button></div>
+  <div class="card other"><h3>Background apps: running vs paused</h3><p class="why">Finds busy apps, pauses them for half the runs and compares.</p><button class="ghost" data-start="background">Start</button></div>
+  <div class="card other"><h3>Something you switch yourself</h3><p class="why">The app tells you when to change it, for example G-Sync.</p>
+   <div class="ab" id="ab-names">
+    <label>A, what you have now<input id="ab-a" value="G-Sync off" maxlength="60"></label>
+    <label>B, what to try<input id="ab-b" value="G-Sync on" maxlength="60"></label>
+   </div>
+   <button class="ghost" data-start="guided">Start</button></div>
  </div>
- <h2>Found on your PC</h2>
- <ul class="find" id="finds"></ul>
+ <details class="lenbox"><summary>Test length (for the other tests)</summary>
+  <div class="len">
+   <label>Seconds per run<input id="len-seconds" type="number" min="10" max="600" step="5" value="60"></label>
+   <label>Runs (per side)<input id="len-runs" type="number" min="3" max="20" value="5"></label>
+   <label>Warm-up runs<input id="len-warmup" type="number" min="0" max="3" value="1"></label>
+  </div>
+ </details>
 </section>
 
 <section id="audit" hidden>
@@ -111,7 +108,7 @@
   <div class="card sum"><h2>Summary</h2><div id="summary"></div></div>
  </div>
  <div class="card"><div class="head"><h2>Tests, changes and notes</h2><div class="row"><button class="ghost" id="add-note">Add a note</button><button class="ghost" id="open-folder">Open results folder</button></div></div>
-  <div class="scroll"><table><thead><tr><th>When</th><th>Test</th><th class="n">1% low (fps)</th><th class="n">Slowest 1% of frames</th><th>Verdict</th><th></th></tr></thead><tbody id="tests"></tbody></table></div>
+  <div class="scroll"><table><thead><tr><th>When</th><th>Test</th><th class="n">1% low (fps)</th><th class="n">Slowest 1% of frames</th><th>Verdict</th><th></th></tr></thead><tbody id="test-rows"></tbody></table></div>
  </div>
 </section>
 
