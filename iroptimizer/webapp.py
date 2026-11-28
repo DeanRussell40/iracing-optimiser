@@ -268,6 +268,7 @@ class Api:
             v["version"] = version_label()
             v["backups"] = self.backups()
             v["focus_labels"] = list(abtest.FOCUS_LABELS)
+            v["picker"] = self._picker_state()
             v["job"] = self._job_state(0)
             v["update"] = self.update_status()
             v["notice"] = (f"Resumed {self._resumed} app(s) that a previous test left paused."
@@ -277,6 +278,91 @@ class Api:
         except Exception as e:
             applog.get().exception("view failed")
             return {"error": f"Couldn't read the results: {e}", "trace": traceback.format_exc(limit=3)}
+
+    # ------------------------------------------------------------------ graphics picker
+    def _read_json(self, name: str) -> dict | None:
+        try:
+            d = json.loads((self._out_dir / name).read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def _picker_state(self) -> dict:
+        """Where the user is in restart check, floor check, cost ranking, pick, and the latest pick."""
+        from . import floors
+        pref = self._settings().get("min_fps", floors.DEFAULT_FLOOR)
+        fc, cr, pk = (self._read_json(n) for n in ("floor_check.json", "cost_rank.json", "pick.json"))
+        steps = [
+            {"test": "floorprobe", "label": "Graphics floor check", "done": bool(fc),
+             "result": (fc or {}).get("text", "")},
+            {"test": "costrank", "label": "What costs the most frames", "done": bool(cr),
+             "result": " ".join(r.get("name", "") + (" (real gain)" if r.get("real") else "")
+                                for r in (cr or {}).get("rows", [])[:3])},
+            {"test": "pick", "label": "Pick my graphics", "done": bool(pk), "result": (pk or {}).get("text", "")},
+        ]
+        pick = None
+        if pk and pk.get("pick"):
+            row = next((r for r in pk.get("rows") or [] if r.get("name") == pk["pick"]), {})
+            pick = {"name": pk["pick"], "text": pk.get("text", ""), "changes": row.get("changes") or {},
+                    "applied": bool(pk.get("applied")), "t": pk.get("t", "")}
+        return {"min_fps": pref, "steps": steps, "pick": pick,
+                "next": next((s_["test"] for s_ in steps if not s_["done"]), None)}
+
+    def set_min_fps(self, value) -> dict:
+        try:
+            from . import i18n
+            v = max(30, min(240, int(value)))
+            i18n.save_setting("min_fps", v)
+            return {"ok": True, "min_fps": v}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def apply_pick(self) -> dict:
+        """Writes the latest pick into iRacing's race and replay settings, after a backup. iRacing must be closed:
+        it writes its own copy back when it exits."""
+        try:
+            from . import apply as applier, config_reader, iniswitch
+            pk = self._read_json("pick.json")
+            if not pk or not pk.get("pick"):
+                return {"ok": False, "error": "There's no pick yet. Run Pick my graphics first."}
+            if self._job and self._job.state == "running":
+                return {"ok": False, "error": "Wait for the test to finish first."}
+            row = next((r for r in pk.get("rows") or [] if r.get("name") == pk["pick"]), {})
+            changes = row.get("changes") or {}
+            running = self._sim_running or applier.iracing_running
+            if running():
+                return {"ok": False, "error": "Close iRacing first: it writes its own settings back when it exits, "
+                                              "which would undo the change."}
+            if not changes:
+                pk["applied"] = True
+                (self._out_dir / "pick.json").write_text(json.dumps(pk, default=str), encoding="utf-8")
+                return {"ok": True, "text": "The pick is your current settings, so nothing needed changing."}
+            cfgi = config_reader.load(str(self._ini_dir()) if self._ini_dir else None)
+            if not cfgi.renderer:
+                return {"ok": False, "error": "iRacing's graphics settings file wasn't found."}
+            from .iniio import IniFile
+            f = IniFile(cfgi.renderer.path)
+            lines = iniswitch.expand(f, changes)
+            bdir = applier.backup(cfgi.directory, "before_pick")
+            for key, val in lines.items():
+                sec, _, k = key.rpartition("/")
+                f.set(k, val, sec)
+            f.save()
+            back = IniFile(cfgi.renderer.path)
+            bad = [k for k, v in lines.items() if str(back.get(k.rpartition("/")[2], k.rpartition("/")[0])) != str(v)]
+            if bad:
+                return {"ok": False, "error": f"Some values didn't read back ({', '.join(bad)}). Restore the backup "
+                                              f"'{bdir.name}' on the Backups tab."}
+            pk["applied"] = True
+            pk["applied_t"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            (self._out_dir / "pick.json").write_text(json.dumps(pk, default=str), encoding="utf-8")
+            self._record_settings(reason="the pick was applied")
+            applog.get().info("pick applied: %s %s (backup %s)", pk["pick"], changes, bdir.name)
+            return {"ok": True, "text": f"Applied: {pk['pick']}. Your old settings are saved as backup "
+                                        f"'{bdir.name}' on the Backups tab."}
+        except Exception as e:
+            applog.get().exception("apply pick failed")
+            return {"ok": False, "error": f"Couldn't apply the pick: {e}"}
 
     def set_focus(self, value) -> dict:
         try:
@@ -434,7 +520,7 @@ class Api:
                     changes = {k: v for k, v in floors.LOWEST.items() if k.lower() in have}
                     opts = {**opts, "label": "Lowest graphics"}
                     try:
-                        floor = float(opts.get("floor") or floors.DEFAULT_FLOOR)
+                        floor = float(opts.get("floor") or self._settings().get("min_fps") or floors.DEFAULT_FLOOR)
                     except (TypeError, ValueError):
                         floor = floors.DEFAULT_FLOOR
                     job.floor = max(30.0, min(500.0, floor))

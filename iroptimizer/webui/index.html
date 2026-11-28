@@ -22,13 +22,17 @@
  <p class="sub" id="subtitle">Loading…</p>
  <div class="read" id="readouts"></div>
  <div class="tune">
-  <div class="card">
-   <h2>What matters most to you</h2>
-   <label for="focus" class="hint">Drag to choose. Moving it never re-runs tests: it picks from what was measured.</label>
-   <input type="range" id="focus" min="0" max="4" step="1" value="1" aria-describedby="pick">
-   <div class="ends"><span>Smoothness</span><span>Graphics</span></div>
-   <p id="pick"><b id="pick-label"></b><span id="pick-text"></span></p>
-   <p class="lock">Stability is locked: every option must hold its frame rate with no extra stutters.</p>
+  <div class="card" id="picker-card">
+   <h2>Your graphics: smooth first, then looks, then FPS</h2>
+   <p class="lock">Smoothness is pass/fail: an option must hold its frame rate with no extra stutters, or it's out.</p>
+   <label class="minfps">Frame rate you'd like<input id="min-fps" type="number" min="30" max="240" step="10" value="120"> FPS</label>
+   <p class="hint">A preference, not a must: a smooth lower frame rate with better looks can still win, and then you drive both before choosing.</p>
+   <ol class="steps" id="picker-steps"></ol>
+   <div id="picker-pick" hidden>
+    <p><b id="pick-name"></b> <span id="pick-text"></span></p>
+    <button class="btn small" id="pick-apply">Apply to iRacing</button>
+   </div>
+   <button class="ghost" id="picker-next" hidden></button>
   </div>
 
   <div class="card start" id="start-card">

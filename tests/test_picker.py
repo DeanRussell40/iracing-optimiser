@@ -98,3 +98,38 @@ def test_pick_runs_options_and_restores(tmp_path):
     assert f.read_text(encoding="utf-8") == INI
     assert (tmp_path / "pick.json").is_file()
     assert any("Lowered what costs frames" in l for l in j["result"]["lines"])
+
+
+def _pick_file(tmp_path, changes):
+    (tmp_path / "pick.json").write_text(json.dumps({
+        "pick": "Picked settings, 120 cap", "text": "Pick: Picked settings, 120 cap (120 FPS, smooth).",
+        "rows": [{"name": "Picked settings, 120 cap", "changes": changes}]}))
+
+
+def test_view_shows_picker_steps_and_next(tmp_path):
+    api = make_api(tmp_path)
+    p = api.view()["picker"]
+    assert [s["test"] for s in p["steps"]] == ["floorprobe", "costrank", "pick"] and p["next"] == "floorprobe"
+    (tmp_path / "floor_check.json").write_text(json.dumps({"text": "120 is reachable."}))
+    assert api.view()["picker"]["next"] == "costrank"
+
+
+def test_apply_pick_writes_race_and_replay_with_backup(tmp_path):
+    f = ini_dir(tmp_path) / "rendererDX11Monitor.ini"
+    f.write_text(INI, encoding="utf-8")
+    _pick_file(tmp_path, {"CrowdDetail": "0", "LimitFrameRate": "1", "DesiredFPSLimit": "120"})
+    running = [True]
+    api = make_api(tmp_path, sim_running=lambda: running[0])
+    assert "Close iRacing" in api.apply_pick()["error"]
+    assert f.read_text(encoding="utf-8") == INI
+    running[0] = False
+    r = api.apply_pick()
+    assert r["ok"], r
+    txt = f.read_text(encoding="utf-8")
+    assert txt.count("CrowdDetail=0") == 2 and "DesiredFPSLimit=120" in txt and "LimitFrameRate=1" in txt
+    assert list((tmp_path / "ini" / "iroptimizer_backups").iterdir())
+    assert api.view()["picker"]["pick"]["applied"]
+
+
+def test_apply_pick_without_a_pick(tmp_path):
+    assert "no pick" in make_api(tmp_path, sim_running=lambda: False).apply_pick()["error"]
