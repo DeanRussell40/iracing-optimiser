@@ -117,6 +117,12 @@ class IRSDKDriver:
     def set_camera(self, cam: Camera) -> None:
         self.ir.cam_switch_num(cam.car_number, cam.group, cam.camera)
 
+    def replay_id(self) -> str | None:
+        """Which replay is showing: its subsession number (stays the same when the file is reopened)."""
+        w = self._get("WeekendInfo") or {}
+        v = w.get("SubSessionID") if isinstance(w, dict) else None
+        return str(v) if v else None
+
     def seek(self, frame: int) -> None:
         self.ir.replay_set_play_position(self.irsdk.RpyPosMode.begin, int(frame))
 
@@ -237,6 +243,36 @@ def schedule(variants: list[Variant], runs: int, warmup_runs: int, per_load: int
 
 
 MIN_SECONDS = 10.0
+FRESH_FRAMES = 60 * 30  # a replay within its first 30 s has just been opened, not placed by the user
+
+
+def start_point(path: Path, driver, frame: int, cam: Camera, log: Callable[[str], None] = print) -> tuple[int, Camera]:
+    """Where tests on this replay start. A replay that has just been opened (still at its very beginning) jumps to
+    the spot saved last time; anywhere else, the current spot is used and saved for next time."""
+    rid = None
+    try:
+        rid = getattr(driver, "replay_id", lambda: None)()
+    except Exception:
+        pass
+    if not rid:
+        return frame, cam
+    try:
+        saved = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    sp = saved.get(rid)
+    if sp and frame < FRESH_FRAMES and sp.get("frame", 0) >= FRESH_FRAMES:
+        log(f"Replay {rid} is at its start, so the test uses its saved spot (frame {sp['frame']}).")
+        return int(sp["frame"]), Camera(**sp["camera"])
+    if frame >= FRESH_FRAMES:
+        saved[rid] = {"frame": frame, "camera": asdict(cam)}
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(json.dumps(saved, indent=1), encoding="utf-8")
+            log(f"Saved this spot (frame {frame}) as the start for replay {rid}.")
+        except OSError:
+            pass
+    return frame, cam
 
 
 def validate(cfg: BenchConfig) -> None:
@@ -272,7 +308,7 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
               clock: Callable[[], float] = time.time, variants: list[Variant] | None = None,
               preflight: Callable[[], str | None] = _default_preflight,
               surface: Callable[[], dict] = _default_surface,
-              background=None, kind: str = "bench") -> Path:
+              background=None, kind: str = "bench", start_points: Path | None = None) -> Path:
     """Runs the bench (or an A/B test when several variants are given) and returns the bundle directory.
     capture_factory(csv_path) -> object with start() -> bool, stop(), .error and .started_at."""
     validate(cfg)
@@ -294,6 +330,8 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
     if start_frame is None:
         raise RuntimeError("Could not read the replay position from iRacing.")
     cam = driver.current_camera()
+    if cfg.start_frame is None and start_points is not None:
+        start_frame, cam = start_point(start_points, driver, start_frame, cam, log)
     log(f"Replay frame {start_frame}, car #{cam.car_number}, camera group {cam.group}.")
 
     fp = fingerprint()

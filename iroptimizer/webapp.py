@@ -72,7 +72,7 @@ class Api:
                  bench_overrides: dict | None = None, updater=None, settings_snapshot: Callable | None = None,
                  sim_ctl=None, sim_running: Callable[[], bool] | None = None,
                  simhub_capture: Callable | None = None, audit_parts: dict | None = None,
-                 powercfg: Callable | None = None):
+                 powercfg: Callable | None = None, reopener=None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
         self._bench_root = self._out_dir / "bench"
         applog.setup(self._out_dir)
@@ -118,6 +118,10 @@ class Api:
         self._ini_restored = iniswitch.restore_leftover(self._out_dir, **({"running": sim_running} if sim_running
                                                                           else {}))
         self._sim_ctl = sim_ctl
+        if reopener is None and sim_ctl is None:
+            from . import clicklearn
+            reopener = clicklearn.default(self._out_dir)
+        self._reopener = reopener
 
     # ------------------------------------------------------------------ dependencies (real ones load lazily)
     def _elevation_problem(self) -> str | None:
@@ -691,8 +695,9 @@ class Api:
             final = "error"  # the window shows the end only after the settings are put back
             try:
                 self._record_settings(reason="a test started")
+                extra = {"start_points": self._out_dir / "start_points.json"} if run_bench is bench.run_bench else {}
                 bdir = run_bench(cfg, self._out_dir, driver, capture, log=lambda s: self._log(job, s), stop=job.stop,
-                                 variants=variants)
+                                 variants=variants, **extra)
                 s = dashboard.load_bundle(bdir) or {}
                 lines = [c["verdict_text"] for c in s.get("comparisons") or []]
                 lines.append((s.get("repeatability") or {}).get("verdict_text", ""))
@@ -779,18 +784,50 @@ class Api:
         sim.close_sim(log=lambda s: self._log(job, s))
 
     def _reopen_sim(self, job: Job, driver, sim) -> None:
-        """Shows a prompt until the replay is open again; continues by itself once it has loaded."""
-        job.prompt = {"id": f"{time.time():.3f}", "title": "Reopen the same replay in iRacing",
-                      "text": "iRacing was closed to change a setting. In iRacing, open the same replay file again "
-                              "(Watch replay). The test carries on by itself once it has loaded; don't move the "
-                              "replay or the camera.", "ok": "OK", "auto": True}
-        self._log(job, "Waiting for the replay to be reopened…")
-        self._front(True)
+        """Reopens the replay: by itself with the learned clicks when it can, otherwise asks the user (and learns
+        their clicks for next time). Continues by itself once the replay has loaded."""
+        ro = self._reopener
+        auto = False
+        if ro is not None and ro.has_recipe():
+            self._log(job, "Reopening the replay in iRacing by itself…")
+            try:
+                auto, why = ro.replay(job.stop.wait, log=lambda s: self._log(job, s))
+            except Exception as e:
+                auto, why = False, str(e)
+            if job.stop.is_set():
+                from .bench import Aborted
+                raise Aborted()
+            if not auto:
+                self._log(job, f"Couldn't reopen it by itself ({why}), so you're asked instead; the app learns "
+                               "your clicks again.")
+        if not auto:
+            job.prompt = {"id": f"{time.time():.3f}", "title": "Reopen the same replay in iRacing",
+                          "text": "iRacing was closed to change a setting. In iRacing, open the same replay file "
+                                  "again (Watch replay). Don't scrub: the test jumps back to its spot by itself. "
+                                  "The app watches your clicks this time and reopens it by itself from then on.",
+                          "ok": "OK", "auto": True}
+            if ro is not None:
+                try:
+                    ro.learn_start()
+                except Exception as e:
+                    self._log(job, f"Couldn't watch the clicks: {e}")
+            self._log(job, "Waiting for the replay to be reopened…")
+            self._front(True)
         try:
             sim.wait_for_replay(driver, job.stop.wait, timeout_s=REOPEN_TIMEOUT_S)
         finally:
-            job.prompt = None
-            self._front(False)
+            if not auto:
+                job.prompt = None
+                self._front(False)
+                if ro is not None:
+                    ro.learn_stop()
+        if not auto and ro is not None:
+            try:
+                n = ro.learn_finish()
+                self._log(job, f"Learned the reopen ({n} click{'s' if n != 1 else ''}); next time it's automatic."
+                          if n else "Couldn't learn the reopen from those clicks; you'll be asked again.")
+            except Exception as e:
+                self._log(job, f"Couldn't save the reopen clicks: {e}")
         self._log(job, "Replay is open again, letting it settle.")
         if job.stop.wait(AFTER_LOAD_S):
             from .bench import Aborted
