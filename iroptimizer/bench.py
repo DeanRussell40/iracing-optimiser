@@ -42,6 +42,7 @@ class BenchConfig:
     lead_trim_s: float = 0.5     # ignore the first moments after pressing play
     start_frame: int | None = None  # None = wherever the replay is when the bench starts
     seek_timeout_s: float = 20.0
+    per_load: int = 1            # runs in a row per variant before switching (switches that restart the sim are slow)
 
 
 @dataclass
@@ -213,17 +214,25 @@ class Variant:
     settle_runs: int = 0  # unmeasured runs after switching to this variant (a fresh sim start streams textures)
 
 
-def schedule(variants: list[Variant], runs: int, warmup_runs: int) -> list[tuple[int, bool]]:
+def schedule(variants: list[Variant], runs: int, warmup_runs: int, per_load: int = 1) -> list[tuple[int, bool]]:
     """(variant index, is_warmup) for every run. Warm-ups use the first variant. With two or more variants the
     measured runs go in balanced blocks (A B, B A, A B …), so drift over the session hits every side equally
-    and the number of switches stays low."""
+    and the number of switches stays low. per_load > 1 runs each variant that many times in a row per visit, and
+    the visits go forwards then backwards (A B C, C B A …) until every variant has `runs` runs."""
     out = [(0, True)] * warmup_runs
     if len(variants) == 1:
         return out + [(0, False)] * runs
     order = list(range(len(variants)))
-    for r in range(runs):
+    per_load = max(1, per_load)
+    done = [0] * len(variants)
+    r = 0
+    while min(done) < runs:
         block = order if r % 2 == 0 else order[::-1]
-        out += [(v, False) for v in block]
+        for v in block:
+            k = min(per_load, runs - done[v])
+            out += [(v, False)] * k
+            done[v] += k
+        r += 1
     return out
 
 
@@ -298,7 +307,7 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
     bg = background if background is not None else _default_background()
     bg.start()
     windows: list[RunWindow] = []
-    plan = schedule(variants, cfg.runs, cfg.warmup_runs)
+    plan = schedule(variants, cfg.runs, cfg.warmup_runs, cfg.per_load)
     active: int | None = None
     counts = [0] * len(variants)
 

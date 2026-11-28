@@ -205,3 +205,60 @@ def test_floor_probe_runs_lowest_against_yours_and_saves_the_answer(tmp_path):
     assert f.read_text(encoding="utf-8") == original
     assert "floor check" in j["result"]["lines"][0] or "FPS" in j["result"]["lines"][0]
     assert (tmp_path / "floor_check.json").is_file()
+
+
+# ---------------------------------------------------------------- cost ranking
+
+from iroptimizer import costrank  # noqa: E402
+
+FULL = ("[Graphics Options]\nAntiAliasMethod=1\nMSAASamples=4\nShaderQuality=3\nStaticShadowRes=2\nShadowMapType=1\n"
+        "CarDetail=2\nObjectDetail=0\nParticleDetail=2\nGrandstandDetail=2\nCrowdDetail=0\n"
+        "[Replay Graphics]\nShadowMapType=1\nCarDetail=2\nObjectDetail=0\nParticleDetail=2\nGrandstandDetail=2\nCrowdDetail=0\n")
+
+
+def test_grouped_schedule_restarts_least():
+    vs = [bench.Variant(n) for n in "ABC"]
+    plan = bench.schedule(vs, runs=6, warmup_runs=0, per_load=3)
+    assert [v for v, _ in plan] == [0] * 3 + [1] * 3 + [2] * 3 + [2] * 3 + [1] * 3 + [0] * 3
+    assert bench.schedule(vs, 2, 0) == [(0, False), (1, False), (2, False), (2, False), (1, False), (0, False)]
+
+
+def test_candidates_skip_what_is_already_lowest():
+    flat = {"antialiasmethod": "1", "msaasamples": "4", "shaderquality": "3", "objectdetail": "0",
+            "grandstanddetail": "2", "crowddetail": "0"}
+    c = dict(costrank.candidates(flat))
+    assert c["MSAA 4x to 2x"] == {"MSAASamples": "2"}
+    assert c["Grandstands and crowd one step lower"] == {"GrandstandDetail": "1"}
+    assert not any("Track objects" in k for k in c)
+
+
+def test_rank_puts_real_gains_first():
+    cmp = [{"variant": "A", "verdict": "same", "metrics": {"low1_fps": {"a": 98, "b": 100}}},
+           {"variant": "B", "verdict": "better", "metrics": {"low1_fps": {"a": 98, "b": 112}}},
+           {"variant": "C", "verdict": "better", "metrics": {"low1_fps": {"a": 98, "b": 104}}}]
+    rows = costrank.rank(cmp, {})
+    assert [r["name"] for r in rows] == ["B", "C", "A"]
+    assert "+14 FPS" in costrank.lines(rows)[0] and "can stay" in costrank.lines(rows)[2]
+
+
+def test_cost_ranking_restores_between_candidates_and_at_the_end(tmp_path):
+    d = ini_dir(tmp_path)
+    f = d / "rendererDX11Monitor.ini"
+    f.write_text(FULL, encoding="utf-8")
+    sim = FakeSim(f)
+    api = make_api(tmp_path, sim_ctl=sim, sim_running=lambda: sim.running)
+    r = api.start("costrank", {"seconds": 0.2})
+    assert r["ok"], r
+    j = wait_done(api, timeout=60)
+    assert j["state"] == "done", j["logs"][-4:]
+    n = len(costrank.candidates({k.lower(): v for k, v in
+                                 (("AntiAliasMethod", "1"), ("MSAASamples", "4"), ("ShaderQuality", "3"),
+                                  ("StaticShadowRes", "2"), ("ShadowMapType", "1"), ("CarDetail", "2"),
+                                  ("ObjectDetail", "0"), ("ParticleDetail", "2"), ("GrandstandDetail", "2"),
+                                  ("CrowdDetail", "0"))}))
+    assert len(sim.seen) == 2 * (n + 1) - 1  # one restart per visit; the turn-around visit is shared
+    for txt in sim.seen:  # every load has at most one setting changed from the original
+        changed = sum(1 for a, b in zip(FULL.splitlines(), txt.splitlines()) if a != b and "[" not in a)
+        assert changed <= 2  # a setting and its replay copy
+    assert f.read_text(encoding="utf-8") == FULL
+    assert (tmp_path / "cost_rank.json").is_file()

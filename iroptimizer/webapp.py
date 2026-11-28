@@ -22,7 +22,7 @@ from . import __version__, abtest, applog, dashboard
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
-TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics", "floorprobe")
+TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics", "floorprobe", "costrank")
 REOPEN_TIMEOUT_S = 900.0
 AFTER_LOAD_S = 10.0  # the sim is still streaming the track when the SDK first shows the replay
 
@@ -57,6 +57,7 @@ class Job:
     answered: threading.Event = field(default_factory=threading.Event)
     cleanup: Callable[[], None] | None = None
     floor: float = 120.0
+    rank_names: dict = field(default_factory=dict)
 
 
 class Api:
@@ -470,6 +471,44 @@ class Api:
                 job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
                 job.title = (f"Floor check: can graphics reach {job.floor:.0f} FPS?" if test == "floorprobe"
                              else f"{b_name} vs your settings")
+        elif test == "costrank":
+            import dataclasses
+            from . import apply as applier, config_reader, costrank, iniswitch
+            sim = self._sim_ctl
+            if sim is None:
+                from . import simctl as sim
+            try:
+                cfgi = config_reader.load(str(self._ini_dir()) if self._ini_dir else None)
+            except Exception as e:
+                return {"ok": False, "error": f"Couldn't read iRacing's settings: {e}"}
+            if not cfgi.renderer:
+                return {"ok": False, "error": "iRacing's graphics settings file wasn't found."}
+            flat = {k.lower(): v for k, v in (cfgi.renderer.as_dict().get("Graphics Options") or
+                                              cfgi.renderer.flat()).items()}
+            cands = costrank.candidates(flat)
+            if not cands:
+                return {"ok": False, "error": "Every setting the ranking tries is already at its lowest."}
+            cfg = dataclasses.replace(cfg, runs=costrank.PER_LOAD * costrank.CYCLES, warmup_runs=0,
+                                      per_load=costrank.PER_LOAD)
+            sw = iniswitch.IniSwitch(self._out_dir, cfgi.renderer.path, **({"running": self._sim_running}
+                                                                          if self._sim_running else {}),
+                                     backup=lambda: applier.backup(cfgi.directory, "before_test"))
+
+            def to(ch: dict | None):
+                def f():
+                    self._close_sim(job, driver, sim)
+                    sw.restore()
+                    if ch:
+                        sw.set(ch)
+                        self._log(job, "Changed: " + ", ".join(f"{k}={v}" for k, v in ch.items()))
+                    self._reopen_sim(job, driver, sim)
+                return f
+            variants = [bench.Variant("Your settings", settle_runs=1, apply=to(None))] + [
+                bench.Variant(name, settle_runs=1, apply=to(ch), description=", ".join(f"{k}={v}" for k, v in ch.items()))
+                for name, ch in cands]
+            job.rank_names = dict(cands)
+            job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
+            job.title = f"What costs the most frames: {len(cands)} settings, one step lower each"
         elif test == "guided":
             a = (str(opts.get("a") or "").strip() or "A")[:60]
             b = (str(opts.get("b") or "").strip() or "B")[:60]
@@ -486,8 +525,8 @@ class Api:
             job.title = f"{b} vs {a}"
         n = cfg.runs * (len(variants) if variants else 1) + cfg.warmup_runs
         job.eta_s = n * (cfg.seconds + cfg.settle_s + 2)
-        if test in ("restart", "graphics", "floorprobe"):
-            plan = bench.schedule(variants, cfg.runs, cfg.warmup_runs)
+        if test in ("restart", "graphics", "floorprobe", "costrank"):
+            plan = bench.schedule(variants, cfg.runs, cfg.warmup_runs, cfg.per_load)
             switches = sum(1 for k, (vi, _w) in enumerate(plan) if k == 0 or plan[k - 1][0] != vi)
             job.eta_s += switches * (90 + cfg.seconds + cfg.settle_s)  # restart, reload, one settling run
         self._job = job
@@ -510,6 +549,15 @@ class Api:
                 s = dashboard.load_bundle(bdir) or {}
                 lines = [c["verdict_text"] for c in s.get("comparisons") or []]
                 lines.append((s.get("repeatability") or {}).get("verdict_text", ""))
+                if test == "costrank":
+                    from . import costrank
+                    rows = costrank.rank(s.get("comparisons") or [], job.rank_names)
+                    lines = costrank.lines(rows) + lines[-1:]
+                    try:
+                        (self._out_dir / "cost_rank.json").write_text(
+                            json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "rows": rows}), encoding="utf-8")
+                    except OSError:
+                        pass
                 if test == "floorprobe":
                     from . import floors
                     try:
