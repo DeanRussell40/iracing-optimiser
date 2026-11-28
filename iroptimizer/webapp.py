@@ -49,6 +49,7 @@ class Job:
     logs: list = field(default_factory=list)
     prompt: dict | None = None
     result: dict | None = None
+    ended: float | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     answered: threading.Event = field(default_factory=threading.Event)
 
@@ -266,17 +267,27 @@ class Api:
         with self._lock:
             job.logs.append({"t": time.strftime("%H:%M:%S"), "text": str(text)})
 
-    def _job_state(self, since: int) -> dict | None:
+    LOG_TAIL = 80
+
+    def _job_state(self, since: int = 0) -> dict | None:
+        """The whole state of the current (or last) test. Every answer is complete and numbered (seq), so the
+        window can always redraw from it and drop an answer older than one it already has."""
         j = self._job
         if not j:
             return None
         with self._lock:
-            logs = j.logs[since:]
+            self._seq = getattr(self, "_seq", 0) + 1
+            seq = self._seq
+            tail = j.logs[-self.LOG_TAIL:]
             n = len(j.logs)
-        el = time.time() - j.started
-        return {"id": f"{j.started:.3f}", "test": j.test, "title": j.title, "state": j.state, "elapsed_s": el, "eta_s": j.eta_s,
+            run = next((x["text"] for x in reversed(j.logs) if x["text"].lower().startswith(("run ", "warm-up"))
+                        or " run " in x["text"].lower()), "")
+        end = j.ended or time.time()
+        el = end - j.started
+        return {"id": f"{j.started:.3f}", "seq": seq, "test": j.test, "title": j.title, "state": j.state,
+                "elapsed_s": el, "eta_s": j.eta_s,
                 "progress": min(0.99, el / j.eta_s) if j.state == "running" and j.eta_s else 1.0,
-                "logs": logs, "next": n, "prompt": j.prompt, "result": j.result}
+                "logs": tail, "next": n, "run": run, "prompt": j.prompt, "result": j.result}
 
     def log_js(self, text) -> dict:
         """Script errors from the window, so a UI problem leaves a trace in app.log."""
@@ -285,8 +296,13 @@ class Api:
 
     def poll(self, since=0) -> dict:
         try:
-            return {"job": self._job_state(int(since or 0))}
+            st = self._job_state()
+            if st:
+                applog.get().debug("poll seq=%s state=%s run=%r logs=%s", st["seq"], st["state"], st["run"],
+                                   st["next"])
+            return {"job": st}
         except Exception as e:
+            applog.get().exception("poll failed")
             return {"error": str(e)}
 
     def scan_background(self) -> dict:
@@ -421,6 +437,7 @@ class Api:
                 log.exception("test failed")
             finally:
                 job.prompt = None
+                job.ended = time.time()
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True, "eta_min": round(job.eta_s / 60, 1), "title": job.title}
 

@@ -25,7 +25,7 @@ def setup(out_dir: Path) -> logging.Logger:
             _handler = RotatingFileHandler(d / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
             _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
             log.addHandler(_handler)
-            log.setLevel(logging.INFO)
+            log.setLevel(logging.DEBUG)  # polls are logged at DEBUG: 1 MB holds several hours of tests
         except OSError:
             pass
     return log
