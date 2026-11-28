@@ -6,6 +6,7 @@ without WebView2 and for the tray mode.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -21,7 +22,7 @@ from . import __version__, abtest, applog, dashboard
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
-TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics")
+TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics", "floorprobe")
 REOPEN_TIMEOUT_S = 900.0
 AFTER_LOAD_S = 10.0  # the sim is still streaming the track when the SDK first shows the replay
 
@@ -55,6 +56,7 @@ class Job:
     stop: threading.Event = field(default_factory=threading.Event)
     answered: threading.Event = field(default_factory=threading.Event)
     cleanup: Callable[[], None] | None = None
+    floor: float = 120.0
 
 
 class Api:
@@ -406,7 +408,7 @@ class Api:
                                       revert=lambda: self._log(job, "Power plan put back: " + (sw.restore() and
                                                                                             found[active] or "?")))]
             job.title = f"{b} vs {a}"
-        elif test in ("restart", "graphics"):
+        elif test in ("restart", "graphics", "floorprobe"):
             sim = self._sim_ctl
             if sim is None:
                 from . import simctl as sim
@@ -419,8 +421,21 @@ class Api:
                 variants[0].apply = variants[1].apply
                 job.title = "Sim restart check: same settings, before vs after a restart"
             else:
-                from . import apply as applier, config_reader, iniswitch, safety
+                from . import apply as applier, config_reader, floors, iniswitch, safety
                 changes = opts.get("changes") or {}
+                if test == "floorprobe":
+                    try:
+                        cfg0 = config_reader.load(str(self._ini_dir()) if self._ini_dir else None)
+                        have = cfg0.renderer.flat() if cfg0.renderer else {}
+                    except Exception:
+                        have = {}
+                    changes = {k: v for k, v in floors.LOWEST.items() if k.lower() in have}
+                    opts = {**opts, "label": "Lowest graphics"}
+                    try:
+                        floor = float(opts.get("floor") or floors.DEFAULT_FLOOR)
+                    except (TypeError, ValueError):
+                        floor = floors.DEFAULT_FLOOR
+                    job.floor = max(30.0, min(500.0, floor))
                 if not isinstance(changes, dict) or not changes or len(changes) > 30:
                     return {"ok": False, "error": "No graphics settings chosen to test."}
                 try:
@@ -453,7 +468,8 @@ class Api:
                 variants = [bench.Variant("Your settings", settle_runs=1, apply=to_a),
                             bench.Variant(b_name, settle_runs=1, apply=to_b, description=desc)]
                 job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
-                job.title = f"{b_name} vs your settings"
+                job.title = (f"Floor check: can graphics reach {job.floor:.0f} FPS?" if test == "floorprobe"
+                             else f"{b_name} vs your settings")
         elif test == "guided":
             a = (str(opts.get("a") or "").strip() or "A")[:60]
             b = (str(opts.get("b") or "").strip() or "B")[:60]
@@ -470,7 +486,7 @@ class Api:
             job.title = f"{b} vs {a}"
         n = cfg.runs * (len(variants) if variants else 1) + cfg.warmup_runs
         job.eta_s = n * (cfg.seconds + cfg.settle_s + 2)
-        if test in ("restart", "graphics"):
+        if test in ("restart", "graphics", "floorprobe"):
             plan = bench.schedule(variants, cfg.runs, cfg.warmup_runs)
             switches = sum(1 for k, (vi, _w) in enumerate(plan) if k == 0 or plan[k - 1][0] != vi)
             job.eta_s += switches * (90 + cfg.seconds + cfg.settle_s)  # restart, reload, one settling run
@@ -494,6 +510,17 @@ class Api:
                 s = dashboard.load_bundle(bdir) or {}
                 lines = [c["verdict_text"] for c in s.get("comparisons") or []]
                 lines.append((s.get("repeatability") or {}).get("verdict_text", ""))
+                if test == "floorprobe":
+                    from . import floors
+                    try:
+                        full = json.loads((Path(bdir) / "summary.json").read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        full = {}
+                    lows = floors.lows_by_variant(full)
+                    fv = floors.verdict(lows.get("Your settings") or [], lows.get("Lowest graphics") or [],
+                                        job.floor)
+                    lines.insert(0, fv["text"])
+                    self._save_floor(fv)
                 job.result = {"id": Path(bdir).name, "lines": [x for x in lines if x],
                               "verdicts": [c.get("verdict") for c in s.get("comparisons") or []]}
                 job.state = "done"
@@ -520,6 +547,14 @@ class Api:
                 job.ended = time.time()
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True, "eta_min": round(job.eta_s / 60, 1), "title": job.title}
+
+    def _save_floor(self, fv: dict) -> None:
+        """Keeps the latest floor check, for the picker to start from."""
+        try:
+            f = self._out_dir / "floor_check.json"
+            f.write_text(json.dumps(fv | {"t": time.strftime("%Y-%m-%dT%H:%M:%S")}), encoding="utf-8")
+        except OSError:
+            pass
 
     def _close_sim(self, job: Job, driver, sim) -> None:
         try:

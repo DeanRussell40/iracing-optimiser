@@ -170,3 +170,38 @@ def test_plain_key_changes_race_and_replay_copies(tmp_path):
     assert "[Graphics]\nShadowMapSize=2048 ; shadow detail\nMSAA=0\n[Replay]\nMSAA=0\n" == txt
     assert sw.restore() == {"Graphics/MSAA": "4", "Replay/MSAA": "4"}
     assert f.read_text(encoding="utf-8") == INI
+
+
+# ---------------------------------------------------------------- floor probe
+
+from iroptimizer import floors  # noqa: E402
+
+
+def test_floor_uses_second_worst_run():
+    assert floors.floor_low1([130, 118, 125, 128, 131]) == 125
+    assert floors.floor_low1([130, 118, 125]) == 118
+    assert floors.floor_low1([]) is None
+
+
+def test_floor_verdicts():
+    assert floors.verdict([98] * 5, [135] * 5)["verdict"] == "reachable"
+    v = floors.verdict([98] * 5, [110, 111, 112, 113, 114])
+    assert v["verdict"] == "not_reachable" and "CPU or the sim" in v["text"] and v["lowest"] == 111
+    assert floors.verdict([125] * 5, [140] * 5)["verdict"] == "met"
+    assert floors.verdict([], [140])["verdict"] == "unknown"
+
+
+def test_floor_probe_runs_lowest_against_yours_and_saves_the_answer(tmp_path):
+    f = ini_dir(tmp_path) / "rendererDX11Monitor.ini"
+    f.write_text(INI + "[Graphics Options]\nShaderQuality=3\n", encoding="utf-8")
+    original = f.read_text(encoding="utf-8")
+    sim = FakeSim(f)
+    api = make_api(tmp_path, sim_ctl=sim, sim_running=lambda: sim.running)
+    r = api.start("floorprobe", {"seconds": 0.2, "runs": 3, "warmup": 0, "floor": 120})
+    assert r["ok"] and "120" in r["title"], r
+    j = wait_done(api)
+    assert j["state"] == "done", j["logs"][-4:]
+    assert any("ShaderQuality=0" in s for s in sim.seen)  # only keys the file has are changed
+    assert f.read_text(encoding="utf-8") == original
+    assert "floor check" in j["result"]["lines"][0] or "FPS" in j["result"]["lines"][0]
+    assert (tmp_path / "floor_check.json").is_file()
