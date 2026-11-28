@@ -210,6 +210,7 @@ class Variant:
     revert: Callable[[], None] | None = None
     manual: bool = False
     description: str = ""
+    settle_runs: int = 0  # unmeasured runs after switching to this variant (a fresh sim start streams textures)
 
 
 def schedule(variants: list[Variant], runs: int, warmup_runs: int) -> list[tuple[int, bool]]:
@@ -301,10 +302,10 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
     active: int | None = None
     counts = [0] * len(variants)
 
-    def switch(to: int):
+    def switch(to: int) -> bool:
         nonlocal active
         if active == to:
-            return
+            return False
         if active is not None and variants[active].revert:
             variants[active].revert()
         active = None
@@ -312,50 +313,57 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
             log(f"Switching to: {variants[to].name}")
             variants[to].apply()
         active = to
+        return True
+
+    def one_run(i: int, v: Variant, warm: bool, label: str) -> None:
+        driver.seek(start_frame)
+        t_seek = clock()
+        got = driver.current_frame()
+        first = got
+        while got is None or abs(got - start_frame) > 5:
+            if clock() - t_seek > cfg.seek_timeout_s:
+                hint = ""
+                if got is not None and first is not None and got > first:
+                    hint = (" The replay kept playing and ignored the jump. This happens when iRacing runs "
+                            "as administrator and this app does not: run this app as administrator too.")
+                raise RuntimeError(f"The replay did not move to frame {start_frame} (it is at {got}).{hint}")
+            _sleep(0.2, stop)
+            got = driver.current_frame()
+        driver.set_camera(cam)
+        _sleep(cfg.settle_s, stop)
+        f0 = driver.current_frame()
+        log(f"{label}: playing {cfg.seconds:.0f} s…")
+        driver.play()
+        t0 = clock()
+        _sleep(cfg.seconds, stop)
+        t1 = clock()
+        driver.pause()
+        f1 = driver.current_frame()
+        w = RunWindow(i, warm, t0 + cfg.lead_trim_s, t1, f0, f1)
+        w_dict = asdict(w) | {"variant": v.name}
+        if f0 is not None and f1 is not None:
+            expected = cfg.seconds * REPLAY_TICKS_PER_S
+            adv = f1 - f0
+            if adv < expected * 0.85 or adv > expected * 1.15:
+                w_dict["valid"] = False
+                w_dict["note"] = (f"Replay advanced {adv} frames, expected about {expected:.0f}. "
+                                  "It was probably not playing at 1x the whole time.")
+                log(f"{label}: {w_dict['note']}")
+        windows.append(w_dict)
 
     try:
         for i, (vi, warm) in enumerate(plan):
             v = variants[vi]
             driver.pause()
-            switch(vi)
+            if switch(vi):
+                for k in range(v.settle_runs):
+                    driver.pause()
+                    one_run(i, v, True, f"{v.name}: settling run {k + 1}/{v.settle_runs}")
             if not warm:
                 counts[vi] += 1
             label = (f"warm-up {i + 1}" if warm else
                      f"{v.name} run {counts[vi]}/{cfg.runs}" if len(variants) > 1 else f"run {counts[vi]}/{cfg.runs}")
-            driver.seek(start_frame)
-            t_seek = clock()
-            got = driver.current_frame()
-            first = got
-            while got is None or abs(got - start_frame) > 5:
-                if clock() - t_seek > cfg.seek_timeout_s:
-                    hint = ""
-                    if got is not None and first is not None and got > first:
-                        hint = (" The replay kept playing and ignored the jump. This happens when iRacing runs "
-                                "as administrator and this app does not: run this app as administrator too.")
-                    raise RuntimeError(f"The replay did not move to frame {start_frame} (it is at {got}).{hint}")
-                _sleep(0.2, stop)
-                got = driver.current_frame()
-            driver.set_camera(cam)
-            _sleep(cfg.settle_s, stop)
-            f0 = driver.current_frame()
-            log(f"{label}: playing {cfg.seconds:.0f} s…")
-            driver.play()
-            t0 = clock()
-            _sleep(cfg.seconds, stop)
-            t1 = clock()
-            driver.pause()
-            f1 = driver.current_frame()
-            w = RunWindow(i, warm, t0 + cfg.lead_trim_s, t1, f0, f1)
-            w_dict = asdict(w) | {"variant": v.name}
-            if f0 is not None and f1 is not None:
-                expected = cfg.seconds * REPLAY_TICKS_PER_S
-                adv = f1 - f0
-                if adv < expected * 0.85 or adv > expected * 1.15:
-                    w_dict["valid"] = False
-                    w_dict["note"] = (f"Replay advanced {adv} frames, expected about {expected:.0f}. "
-                                      "It was probably not playing at 1x the whole time.")
-                    log(f"{label}: {w_dict['note']}")
-            windows.append(w_dict)
+            one_run(i, v, warm, label)
     finally:
         try:
             if active is not None and variants[active].revert:
