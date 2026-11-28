@@ -3,7 +3,7 @@
 (() => {
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
-let api = null, V = null, logNext = 0, pollTimer = null, lastPrompt = null, screen = "tune";
+let api = null, V = null, lastPrompt = null, screen = "tune";
 
 // ------------------------------------------------------------------ helpers
 function toast(text, ok = false) {
@@ -212,9 +212,9 @@ async function startTest(test, extra = {}) {
     } else toast(r.error || "The test didn't start.");
     return;
   }
-  logNext = 0; $("run-log").innerHTML = "";
+  $("run-log").innerHTML = "";
   showJob({title: r.title, state: "running", progress: 0, elapsed_s: 0, eta_s: r.eta_min * 60, logs: []});
-  poll();
+  startLoop();
 }
 let dismissedJob = null;
 const VERDICT = {better: "B is better", worse: "B is worse", mixed: "Mixed result", same: "No meaningful difference"};
@@ -228,38 +228,51 @@ function showResult(j) {
   $("run-report").hidden = !j.result.id;
   box.hidden = false;
 }
+// Following a test. One loop, at most one request in flight, and every answer is the complete state, numbered by
+// the app. (Before: each poll could start two more, so polls multiplied until the window fell minutes behind and
+// kept repeating the first run's line.)
+let lastSeq = 0, inFlight = false, lastOk = 0, loop = null, finishedSeen = null;
 function showJob(j, fromView = false) {
   // from a refresh: show a running job, or a finished one the user hasn't closed yet
   if (fromView && j.state !== "running" && (j.state !== "done" || dismissedJob === j.id)) return;
+  if (j.seq !== undefined) {
+    if (j.seq <= lastSeq) return;  // older than what's on screen
+    lastSeq = j.seq;
+  }
   $("start-card").hidden = true; $("run-card").hidden = false;
   $("run-title").textContent = j.title;
   const pct = Math.round((j.progress || 0) * 100);
   $("run-bar").firstElementChild.style.width = pct + "%";
   $("run-bar").setAttribute("aria-valuenow", pct);
   const running = j.state === "running";
-  $("run-eta").textContent = running ? `${mins(j.elapsed_s)} of about ${mins(j.eta_s)}. Leave the PC alone unless the app asks you to switch something.`
+  $("run-eta").textContent = running ? `${mins(j.elapsed_s)} of about ${mins(j.eta_s)}${j.run ? ` · ${j.run}` : ""}. Leave the PC alone unless the app asks you to switch something.`
     : {done: "Finished.", stopped: "Stopped. Nothing was changed.", error: "The test failed. See the last line below."}[j.state] || "";
   $("run-stop").hidden = !running; $("run-close").hidden = running;
   $("run-card").dataset.job = j.id || "";
   showResult(j);
-  if (j.logs && j.logs.length) {
-    const ul = $("run-log");
-    ul.insertAdjacentHTML("beforeend", j.logs.map(l => `<li><span>${esc(l.t)}</span>${esc(l.text)}</li>`).join(""));
-    while (ul.children.length > 200) ul.firstElementChild.remove();
-    ul.scrollTop = ul.scrollHeight;
-  }
-  if (j.next !== undefined) logNext = j.next;
-  if (running && !pollTimer) pollTimer = setTimeout(poll, pollEvery());
+  const ul = $("run-log");  // redrawn from the app's own log tail, so a line can never repeat
+  ul.innerHTML = (j.logs || []).map(l => `<li><span>${esc(l.t)}</span>${esc(l.text)}</li>`).join("");
+  ul.scrollTop = ul.scrollHeight;
+  if (running) startLoop();
 }
-async function poll() {
-  pollTimer = null;
-  const r = await call("poll", logNext);
-  if (!r || r.failed || r.error) {  // keep following the test: one failed call mustn't lose it
-    pollTimer = setTimeout(poll, pollEvery());
+function startLoop() {
+  if (!loop) loop = setInterval(tick, 1500);
+}
+async function tick() {
+  if (inFlight) {
+    if (Date.now() - lastOk > 30000) logJs("poll has had no answer for 30 s");
     return;
   }
-  const j = r && r.job;
-  if (!j) return;
+  if (document.hidden && Date.now() - lastOk < 5000) return;  // behind iRacing: every 5 s is enough
+  inFlight = true;
+  try { await poll(); } finally { inFlight = false; }
+}
+async function poll() {
+  const r = await call("poll");
+  if (!r || r.failed || r.error) return;  // the loop tries again
+  lastOk = Date.now();
+  const j = r.job;
+  if (!j) { clearInterval(loop); loop = null; return; }
   showJob(j);
   if (j.prompt && j.prompt.id !== lastPrompt) {
     lastPrompt = j.prompt.id;
@@ -267,14 +280,13 @@ async function poll() {
       .then(ok => ok ? call("answer", j.prompt.id) : call("stop"));
   }
   if (!j.prompt && lastPrompt && $("dlg").open && $("dlg").classList.contains("prompt")) { $("dlg").close(); lastPrompt = null; }
-  if (j.state === "running") { pollTimer = setTimeout(poll, pollEvery()); return; }
-  if (j.state === "done" && j.result) {
-    if (screen !== "tune") show("tune");
-    refresh().then(() => showJob(j));  // the result panel stays until Close
-  }
+  if (j.state === "running") return;
+  clearInterval(loop); loop = null;
+  if (finishedSeen === j.id) return;
+  finishedSeen = j.id;
+  if (j.state === "done" && j.result && screen !== "tune") show("tune");
+  refresh();  // new results; the result panel stays until Close
 }
-// The app must not cost the sim CPU while it measures: slow polling, slower still when hidden behind iRacing.
-const pollEvery = () => document.hidden ? 5000 : 2000;
 
 // ------------------------------------------------------------------ updates
 async function watchUpdate(tries = 0) {
@@ -374,9 +386,10 @@ function wire() {
 }
 
 function logJs(msg) { try { api && api.log_js(String(msg)); } catch (e) { /* nothing more to do */ } }
-document.addEventListener("visibilitychange", () => {  // back from iRacing: catch up at once
-  if (!document.hidden && pollTimer) { clearTimeout(pollTimer); poll(); }
-});
+// back from iRacing, or the window gets focus: catch up with the app at once (it is the only source of truth)
+const reconcile = () => { if (!document.hidden) { refresh(); if (loop) tick(); } };
+document.addEventListener("visibilitychange", reconcile);
+window.addEventListener("focus", reconcile);
 window.addEventListener("error", e => logJs(`${e.message} at ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", e => logJs("unhandled: " + (e.reason && e.reason.stack || e.reason)));
 async function boot() {

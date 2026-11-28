@@ -440,3 +440,29 @@ def test_app_log_records_tests_and_window_errors(tmp_path):
         h.flush()
     text = (tmp_path / "logs" / "app.log").read_text(encoding="utf-8")
     assert "app start" in text and "test start" in text and "test done" in text and "window: TypeError" in text
+
+
+def test_poll_snapshot_advances_and_next_test_can_start(tmp_path):
+    """The window redraws from each poll; seq must rise, the run line must move past run 1, and a new test must
+    start once the old one has ended (the 'stuck on run 1/5' report)."""
+    api = make_api(tmp_path)
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
+    seqs, runs = [], set()
+    t = time.time()
+    while time.time() - t < 20:
+        j = api.poll()["job"]
+        seqs.append(j["seq"])
+        if j["run"]:
+            runs.add(j["run"])
+        assert len(j["logs"]) <= webapp.Api.LOG_TAIL
+        if j["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert j["state"] == "done", j["logs"][-3:]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+    assert len(runs) >= 2, runs
+    el = j["elapsed_s"]
+    time.sleep(0.3)
+    assert api.poll()["job"]["elapsed_s"] == el  # the clock stops when the test ends
+    assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
+    assert wait_done(api)["state"] == "done"
