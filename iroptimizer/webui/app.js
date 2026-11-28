@@ -276,8 +276,9 @@ async function poll() {
   showJob(j);
   if (j.prompt && j.prompt.id !== lastPrompt) {
     lastPrompt = j.prompt.id;
-    dialog({title: j.prompt.title, html: `<p>${esc(j.prompt.text)}</p>`, ok: "Done", cancel: "Stop the test", prompt: true})
-      .then(ok => ok ? call("answer", j.prompt.id) : call("stop"));
+    const pid = j.prompt.id, auto = !!j.prompt.auto;
+    dialog({title: j.prompt.title, html: `<p>${esc(j.prompt.text)}</p>`, ok: j.prompt.ok || "Done", cancel: "Stop the test", prompt: true})
+      .then(ok => ok ? (auto ? null : call("answer", pid)) : call("stop"));
   }
   if (!j.prompt && lastPrompt && $("dlg").open && $("dlg").classList.contains("prompt")) { $("dlg").close(); lastPrompt = null; }
   if (j.state === "running") return;

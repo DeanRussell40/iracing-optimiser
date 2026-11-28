@@ -21,7 +21,9 @@ from . import __version__, abtest, applog, dashboard
 APP = "iRacing Optimiser"
 WEBUI = Path(__file__).parent / "webui"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
-TESTS = ("repeat", "background", "guided", "powerplan")
+TESTS = ("repeat", "background", "guided", "powerplan", "restart", "graphics")
+REOPEN_TIMEOUT_S = 900.0
+AFTER_LOAD_S = 10.0  # the sim is still streaming the track when the SDK first shows the replay
 
 
 def default_out_dir() -> Path:
@@ -52,6 +54,7 @@ class Job:
     ended: float | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     answered: threading.Event = field(default_factory=threading.Event)
+    cleanup: Callable[[], None] | None = None
 
 
 class Api:
@@ -63,6 +66,7 @@ class Api:
                  sampler_factory: Callable | None = None, pauser_factory: Callable | None = None,
                  ini_dir: Callable[[], Path] | None = None, scan_seconds: float = 5.0, opener: Callable = _open,
                  bench_overrides: dict | None = None, updater=None, settings_snapshot: Callable | None = None,
+                 sim_ctl=None, sim_running: Callable[[], bool] | None = None,
                  simhub_capture: Callable | None = None, audit_parts: dict | None = None,
                  powercfg: Callable | None = None):
         self._out_dir = Path(out_dir) if out_dir else default_out_dir()
@@ -81,6 +85,7 @@ class Api:
         self._sampler_factory = sampler_factory
         self._pauser_factory = pauser_factory
         self._ini_dir = ini_dir
+        self._sim_running = sim_running
         self._scan_seconds = scan_seconds
         self._opener = opener
         self._bench_overrides = bench_overrides or {}
@@ -105,6 +110,10 @@ class Api:
         from . import powerplan
         kw = {"run": powercfg} if powercfg else {}
         self._plan_restored = powerplan.restore_leftover(self._out_dir, **kw)  # a crashed test's plan switch
+        from . import iniswitch
+        self._ini_restored = iniswitch.restore_leftover(self._out_dir, **({"running": sim_running} if sim_running
+                                                                          else {}))
+        self._sim_ctl = sim_ctl
 
     # ------------------------------------------------------------------ dependencies (real ones load lazily)
     def _elevation_problem(self) -> str | None:
@@ -397,6 +406,54 @@ class Api:
                                       revert=lambda: self._log(job, "Power plan put back: " + (sw.restore() and
                                                                                             found[active] or "?")))]
             job.title = f"{b} vs {a}"
+        elif test in ("restart", "graphics"):
+            sim = self._sim_ctl
+            if sim is None:
+                from . import simctl as sim
+            reopen = lambda: self._reopen_sim(job, driver, sim)  # noqa: E731
+            if test == "restart":
+                variants = [bench.Variant("Before restart", settle_runs=1),
+                            bench.Variant("After restart", settle_runs=1, apply=lambda: (
+                                self._close_sim(job, driver, sim), reopen()),
+                                description="The app closed iRacing and you reopened the same replay.")]
+                variants[0].apply = variants[1].apply
+                job.title = "Sim restart check: same settings, before vs after a restart"
+            else:
+                from . import apply as applier, config_reader, iniswitch, safety
+                changes = opts.get("changes") or {}
+                if not isinstance(changes, dict) or not changes or len(changes) > 30:
+                    return {"ok": False, "error": "No graphics settings chosen to test."}
+                try:
+                    changes = {str(k): safety.safe_value(v) for k, v in changes.items()}
+                    cfgi = config_reader.load(str(self._ini_dir()) if self._ini_dir else None)
+                except Exception as e:
+                    return {"ok": False, "error": f"Can't use those settings: {e}"}
+                if not cfgi.renderer:
+                    return {"ok": False, "error": "iRacing's graphics settings file wasn't found."}
+                for key in changes:
+                    sec, _, k = key.rpartition("/")
+                    if cfgi.renderer.get(k, sec or None) is None:
+                        return {"ok": False, "error": f"{k} isn't in {cfgi.renderer.path.name}."}
+                sw = iniswitch.IniSwitch(self._out_dir, cfgi.renderer.path, **({"running": self._sim_running}
+                                                                              if self._sim_running else {}),
+                                         backup=lambda: applier.backup(cfgi.directory, "before_test"))
+                b_name = (str(opts.get("label") or "").strip() or "Changed settings")[:60]
+                desc = ", ".join(f"{k.rpartition('/')[2]}={v}" for k, v in changes.items())
+
+                def to_a():
+                    self._close_sim(job, driver, sim)
+                    sw.restore()
+                    reopen()
+
+                def to_b():
+                    self._close_sim(job, driver, sim)
+                    sw.set(changes)
+                    self._log(job, "Changed: " + desc)
+                    reopen()
+                variants = [bench.Variant("Your settings", settle_runs=1, apply=to_a),
+                            bench.Variant(b_name, settle_runs=1, apply=to_b, description=desc)]
+                job.cleanup = lambda: self._finish_ini(job, driver, sim, sw)
+                job.title = f"{b_name} vs your settings"
         elif test == "guided":
             a = (str(opts.get("a") or "").strip() or "A")[:60]
             b = (str(opts.get("b") or "").strip() or "B")[:60]
@@ -413,6 +470,10 @@ class Api:
             job.title = f"{b} vs {a}"
         n = cfg.runs * (len(variants) if variants else 1) + cfg.warmup_runs
         job.eta_s = n * (cfg.seconds + cfg.settle_s + 2)
+        if test in ("restart", "graphics"):
+            plan = bench.schedule(variants, cfg.runs, cfg.warmup_runs)
+            switches = sum(1 for k, (vi, _w) in enumerate(plan) if k == 0 or plan[k - 1][0] != vi)
+            job.eta_s += switches * (90 + cfg.seconds + cfg.settle_s)  # restart, reload, one settling run
         self._job = job
         run_bench = self._run_bench or bench.run_bench
         driver = self._driver_factory() if self._driver_factory else bench.IRSDKDriver()
@@ -449,9 +510,50 @@ class Api:
                 log.exception("test failed")
             finally:
                 job.prompt = None
+                if job.cleanup:
+                    try:
+                        job.cleanup()
+                    except Exception as e:
+                        self._log(job, f"Couldn't put your iRacing settings back: {e}. The app will try again "
+                                       "at its next start.")
+                        log.exception("ini restore failed")
                 job.ended = time.time()
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True, "eta_min": round(job.eta_s / 60, 1), "title": job.title}
+
+    def _close_sim(self, job: Job, driver, sim) -> None:
+        try:
+            driver.disconnect()
+        except Exception:
+            pass
+        sim.close_sim(log=lambda s: self._log(job, s))
+
+    def _reopen_sim(self, job: Job, driver, sim) -> None:
+        """Shows a prompt until the replay is open again; continues by itself once it has loaded."""
+        job.prompt = {"id": f"{time.time():.3f}", "title": "Reopen the same replay in iRacing",
+                      "text": "iRacing was closed to change a setting. In iRacing, open the same replay file again "
+                              "(Watch replay). The test carries on by itself once it has loaded; don't move the "
+                              "replay or the camera.", "ok": "OK", "auto": True}
+        self._log(job, "Waiting for the replay to be reopened…")
+        self._front(True)
+        try:
+            sim.wait_for_replay(driver, job.stop.wait, timeout_s=REOPEN_TIMEOUT_S)
+        finally:
+            job.prompt = None
+            self._front(False)
+        self._log(job, "Replay is open again, letting it settle.")
+        if job.stop.wait(AFTER_LOAD_S):
+            from .bench import Aborted
+            raise Aborted()
+
+    def _finish_ini(self, job: Job, driver, sim, sw) -> None:
+        """After a graphics test: iRacing must be closed before its settings file is put back, or it would write
+        the test values back over the file when it exits."""
+        if not sw.state.is_file():
+            return
+        self._close_sim(job, driver, sim)
+        sw.restore()
+        self._log(job, "Your iRacing settings were put back. iRacing was closed to do that; open it again as usual.")
 
     def _ask(self, job: Job, title: str, text: str) -> None:
         """Blocks the test thread until the user presses Done. Brings the window over iRacing and beeps."""
