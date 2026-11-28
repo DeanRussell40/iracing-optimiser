@@ -243,6 +243,30 @@ def schedule(variants: list[Variant], runs: int, warmup_runs: int, per_load: int
 
 
 MIN_SECONDS = 10.0
+
+
+def _cap_size(cap) -> int | None:
+    f = getattr(cap, "size", None)
+    try:
+        return f() if callable(f) else None
+    except Exception:
+        return None
+
+
+def _check_capture(cap, size0: int | None, idle: list, label: str) -> None:
+    """Stops the test when the frame recorder has died or stopped writing, instead of carrying on with empty runs
+    (it happened once: the recorder quit with the first sim restart and a whole test measured nothing)."""
+    running = getattr(cap, "running", None)
+    if callable(running) and not running():
+        raise RuntimeError(f"The frame recorder (PresentMon) stopped during {label}, so nothing more could be "
+                           "measured. The test was stopped and your settings put back.")
+    size1 = _cap_size(cap)
+    if size0 is None or size1 is None:
+        return
+    idle[0] = idle[0] + 1 if size1 <= size0 else 0
+    if idle[0] >= 2:
+        raise RuntimeError("The frame recorder (PresentMon) recorded no frames in two runs in a row, so the "
+                           "results would be empty. The test was stopped and your settings put back.")
 FRESH_FRAMES = 60 * 30  # a replay within its first 30 s has just been opened, not placed by the user
 
 
@@ -362,6 +386,8 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
         active = to
         return True
 
+    idle = [0]  # runs in a row in which the frame log didn't grow
+
     def one_run(i: int, v: Variant, warm: bool, label: str) -> None:
         driver.seek(start_frame)
         t_seek = clock()
@@ -380,11 +406,13 @@ def run_bench(cfg: BenchConfig, out_root: Path, driver: ReplayDriver, capture_fa
         _sleep(cfg.settle_s, stop)
         f0 = driver.current_frame()
         log(f"{label}: playing {cfg.seconds:.0f} s…")
+        size0 = _cap_size(cap)
         driver.play()
         t0 = clock()
         _sleep(cfg.seconds, stop)
         t1 = clock()
         driver.pause()
+        _check_capture(cap, size0, idle, label)
         f1 = driver.current_frame()
         w = RunWindow(i, warm, t0 + cfg.lead_trim_s, t1, f0, f1)
         w_dict = asdict(w) | {"variant": v.name}

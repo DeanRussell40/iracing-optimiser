@@ -163,7 +163,9 @@ class Capture:
         for n in PROCESS_NAMES:
             args += ["--process_name", n]
         args += ["--output_file", str(self.out_csv), "--session_name", self.session, "--stop_existing_session",
-                 "--no_console_stats", "--date_time", "--terminate_on_proc_exit"]
+                 "--no_console_stats", "--date_time"]
+        # No --terminate_on_proc_exit: graphics tests close and reopen iRacing, and the capture has to carry on into
+        # the new sim process (PresentMon follows the process name). It is stopped through its session instead.
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                      creationflags=flags)
@@ -186,6 +188,12 @@ class Capture:
 
     def running(self) -> bool:
         return bool(self.proc and self.proc.poll() is None)
+
+    def size(self) -> int:
+        try:
+            return self.out_csv.stat().st_size
+        except OSError:
+            return 0
 
     def stop(self, timeout_s: float = 8.0) -> None:
         if not self.proc:

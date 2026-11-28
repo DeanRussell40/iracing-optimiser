@@ -433,6 +433,7 @@ class Api:
     def _log(self, job: Job, text: str) -> None:
         with self._lock:
             job.logs.append({"t": time.strftime("%H:%M:%S"), "text": str(text)})
+        applog.get().info("test: %s", text)  # also in app.log, so a test can be followed and checked afterwards
 
     LOG_TAIL = 80
 
