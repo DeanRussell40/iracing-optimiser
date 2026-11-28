@@ -127,8 +127,21 @@ def install(want_sha: str, exe: Path | None = None, download: Callable[[Path], N
     return target
 
 
-def _launch(exe: Path) -> None:
+ELEVATION_REQUIRED = 740  # Windows refuses a plain start of an exe that asks for admin from a non-admin process
+
+
+def _launch(exe: Path, popen: Callable = subprocess.Popen, elevate: Callable | None = None) -> None:
+    """Starts the new exe. From an admin copy it simply inherits admin. The exe asks for admin (since 0.20), so from
+    a non-admin copy Windows refuses a plain start; then it is started through the UAC prompt instead."""
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     from .winsys import child_env
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True,  # noqa: S603  # nosec B603
-                     env=child_env())
+    try:
+        popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True,  # noqa: S603  # nosec B603
+              env=child_env())
+    except OSError as e:
+        if getattr(e, "winerror", None) != ELEVATION_REQUIRED:
+            raise
+        from .winsys import run_elevated
+        if not (elevate or run_elevated)(exe):
+            raise RuntimeError("The update is installed, but Windows didn't start it as administrator. "
+                               "Open the app again.") from e

@@ -339,7 +339,7 @@ def _settings_findings(history: list[dict], current: list[dict], settings_proble
     def add(level, title, detail="", action=None):
         out.append({"level": level, "title": title, "detail": detail, "action": action})
     if settings_problem:
-        add("warn", "Replay and race graphics differ", settings_problem)
+        add("warn", "Settings file: replay and race graphics differ", settings_problem)
     if history and not current:
         add("warn", "Your graphics settings changed since the last test",
             "Earlier results were measured on other settings, so they don't describe your PC as it is now. They "

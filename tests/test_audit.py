@@ -72,7 +72,7 @@ def test_nvidia_items_prefer_the_iracing_profile_and_flag_shader_cache_off():
 def test_iracing_items_show_replay_differences():
     i = by_name(audit.iracing_items(SNAP))
     assert i["MaxCarsToDraw"]["value"] == "40 race, 20 replay" and i["MaxCarsToDraw"]["level"] == "warn"
-    assert "Close iRacing, then press Read again" in i["Replay and race graphics differ"]["note"]
+    assert "close iRacing, then press Read again" in i["Replay and race graphics differ (settings file)"]["note"]
     assert i["DynamicShadowMaps"]["value"] == "1" and i["DynamicShadowMaps"]["level"] == "test"
     assert i["SSAO"]["test"] == {"a": "SSAO 1", "b": "SSAO lower"}
     assert audit.iracing_items(None)[0]["value"] == "Couldn't read"
@@ -102,3 +102,27 @@ def test_api_audit(tmp_path):
         "nvidia": lambda: audit.nvidia_items(read=lambda: NV)})
     r = api.audit()
     assert r["ok"] and any(i["name"] == "MaxCarsToDraw" for i in r["items"])
+
+
+def test_mismatch_ignores_differences_that_cant_matter():
+    from iroptimizer import config_reader
+    race = {"MotionBlurStrength": "0", "MotionBlurDrivingCams": "1", "MotionBlurBroadcastCams": "0",
+            "DynamicShadowMaps": "0", "DynamicShadowTrim": "1", "LODMinFPSTarget": "80",
+            "HideCockpitObstructions": "1", "DriverHands": "0", "SteeringWheel": "1", "MaxCarsToDraw": "20"}
+    rep = {**race, "MotionBlurDrivingCams": "0", "MotionBlurBroadcastCams": "1", "DynamicShadowTrim": "0",
+           "LODMinFPSTarget": "60", "HideCockpitObstructions": "0", "DriverHands": "1", "SteeringWheel": "0"}
+    snap = {"renderer": {"Graphics Options": race, "Replay Graphics": rep}}
+    assert config_reader.replay_mismatch(snap, low1=85) == []
+    assert [d["key"] for d in config_reader.replay_mismatch(snap, low1=70)] == ["LODMinFPSTarget"]
+    assert [d["key"] for d in config_reader.replay_mismatch(snap)] == ["LODMinFPSTarget"]  # 1% low unknown
+    assert {d["key"] for d in config_reader.view_toggle_diffs(snap)} == {"HideCockpitObstructions", "DriverHands",
+                                                                         "SteeringWheel"}
+    # with blur or dynamic shadows on, the dependent keys count again
+    on = {"renderer": {"Graphics Options": {**race, "MotionBlurStrength": "2", "DynamicShadowMaps": "1"},
+                       "Replay Graphics": {**rep, "MotionBlurStrength": "2", "DynamicShadowMaps": "1"}}}
+    keys = {d["key"] for d in config_reader.replay_mismatch(on, low1=85)}
+    assert keys == {"MotionBlurDrivingCams", "MotionBlurBroadcastCams", "DynamicShadowTrim"}
+    assert "settings file" in config_reader.mismatch_text(config_reader.replay_mismatch(on, low1=85))
+    items = {i["name"]: i for i in audit.iracing_items(snap, low1=85)}
+    assert "Replay and race graphics differ (settings file)" not in items
+    assert items["Cockpit view toggles differ in replays"]["level"] == "info"

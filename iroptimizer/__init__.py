@@ -3,7 +3,7 @@
 The version lives here only. The build adds iroptimizer/_build.py (build number, commit, date); a release tag
 vX.Y.Z must match __version__ or the build fails.
 """
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 try:  # written by the GitHub Actions build, absent when running from source
     from ._build import BUILD  # type: ignore
