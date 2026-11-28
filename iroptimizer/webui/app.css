@@ -124,6 +124,27 @@ tr.event td{color:var(--mute);font-size:13px}tr.event .tag{margin-right:6px}
 
 .minfps{display:flex;gap:8px;align-items:center;margin:12px 0 4px;font-size:14px}
 .minfps input{width:70px}
-#picker-steps{margin:10px 0}
-#picker-steps li.done b{color:var(--ok,#5c5)}
-#picker-pick{margin-top:10px}
+
+/* Tests tab: the four graphics tests as numbered cards, the next one lit */
+#testsview .minfps{margin-top:0}
+#testsview .run{margin:18px 0}
+.stepcards{list-style:none;margin:18px 0 28px;padding:0;display:flex;flex-direction:column;gap:12px}
+.stepcard{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:18px;align-items:start}
+.stepcard .num{font:700 40px/1 var(--display);color:var(--mute);text-align:center;padding-top:2px}
+.stepcard.next{border-color:var(--go);box-shadow:inset 4px 0 0 var(--go)}
+.stepcard.next .num{color:var(--go)}
+.stepcard.passed .num,.stepcard.done .num{color:var(--good)}
+.stepcard.failed .num{color:var(--bad)}
+.stepcard .head{justify-content:flex-start;gap:14px}
+.stepcard p{margin:6px 0 0}
+.stepcard .result-line{color:var(--ink);font-weight:500}
+.stepcard .needs{font-size:14px;color:var(--mute)}.stepcard .needs b{color:var(--ink)}
+.stepcard .go{align-self:center}
+.stepcard .go .btn{font-size:20px;padding:16px 22px}
+.pickbox{border-top:1px solid var(--line);margin-top:12px;padding-top:10px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+.ghost[disabled]{opacity:.45;cursor:default}
+.other-h{margin-top:8px}
+.others{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:14px}
+.other{display:flex;flex-direction:column;gap:8px}.other h3{margin:0;font-size:17px}.other .ghost{align-self:flex-start;margin-top:auto}
+.lenbox{color:var(--mute);font-size:14px}.lenbox .len{margin-top:10px;max-width:520px}
+@media(max-width:760px){.stepcard{grid-template-columns:40px minmax(0,1fr)}.stepcard .go{grid-column:2}}

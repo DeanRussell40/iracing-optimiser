@@ -40,7 +40,7 @@ function dialog({title, html, ok = "OK", cancel = "Cancel", prompt = false}) {
 }
 function show(name) {
   screen = name;
-  for (const s of ["tune", "audit", "results", "backups"]) {
+  for (const s of ["tune", "testsview", "audit", "results", "backups"]) {
     $(s).hidden = s !== name;
     document.querySelector(`.nav[data-screen=${s}]`).setAttribute("aria-current", s === name);
   }
@@ -102,12 +102,12 @@ function render(v) {
     (f.action ? `<button class="ghost" data-action="${esc(f.action.id)}">${esc(f.action.label)}</button>` : "<span></span>") + "</li>").join("");
   $("go").textContent = v.next.label;
   $("go-why").textContent = v.next.why;
-  renderPicker(v.picker);
+  renderSteps(v.picker, v.job);
   if (v.notice) toast(v.notice, true);
   // results
   $("headline").textContent = v.headline;
   $("summary").innerHTML = v.summary.map(p => `<p>${esc(p)}</p>`).join("");
-  $("tests").innerHTML = v.tests.length ? v.tests.map(t => t.kind && t.kind !== "test"
+  $("test-rows").innerHTML = v.tests.length ? v.tests.map(t => t.kind && t.kind !== "test"
     ? `<tr class="event ${esc(t.kind)}"><td class="nowrap">${esc(t.when)}</td><td colspan="5"><span class="tag ${t.kind === "note" ? "info" : "warn"}">${esc(t.title)}</span> ${esc(t.text)}</td></tr>`
     : `<tr${t.stale ? ' class="stale"' : ""}><td class="nowrap">${esc(t.when)}</td><td>${esc(t.test)}${t.stale ? ' <span class="tag info">Other settings</span>' : ""}</td><td class="n">${esc(t.low1)}</td><td class="n">${esc(t.p99)}</td>` +
     `<td><span class="tag ${esc(t.level)}">${esc(t.verdict)}</span></td>` +
@@ -117,20 +117,35 @@ function render(v) {
   renderBackups(v.backups);
   if (v.job) showJob(v.job, true);
 }
-function renderPicker(p) {
+const STATUS = {not_run: ["info", "Not run yet"], running: ["warn", "Running"], passed: ["good", "Passed"],
+                done: ["good", "Done"], failed: ["bad", "Failed"]};
+let PK = null;
+function renderSteps(p, job) {
   if (!p) return;
+  PK = p;
   if (document.activeElement !== $("min-fps")) $("min-fps").value = p.min_fps;
-  $("picker-steps").innerHTML = p.steps.map(st =>
-    `<li class="${st.done ? "done" : ""}"><b>${esc(st.label)}</b>${st.done ? (st.result ? ` ${esc(st.result)}` : " Done.") : " Not run yet."}</li>`).join("");
-  const nx = p.steps.find(st => st.test === p.next);
-  $("picker-next").hidden = !nx;
-  if (nx) { $("picker-next").textContent = `Run next: ${nx.label}`; $("picker-next").dataset.test = nx.test; }
-  $("picker-pick").hidden = !p.pick;
-  if (p.pick) {
-    $("pick-name").textContent = p.pick.applied ? "Applied." : "Latest pick.";
-    $("pick-text").textContent = p.pick.text;
-    $("pick-apply").hidden = p.pick.applied;
-  }
+  $("steps-warn").hidden = !p.warn;
+  $("steps-warn").innerHTML = p.warn ? `<p>${esc(p.warn)}</p>` : "";
+  const busy = !!(job && job.state === "running");
+  const done = p.steps.filter(st => st.done).length;
+  $("tune-steps-line").textContent = `${done} of ${p.steps.length} done.` + (p.next ? ` Next: ${p.steps.find(st => st.test === p.next).label}.` : " All done.");
+  $("stepcards").innerHTML = p.steps.map((st, i) => {
+    let [cls, word] = STATUS[st.status] || STATUS.not_run;
+    if (st.status === "running" && job && job.eta_s) word = `Running, about ${mins(Math.max(0, job.eta_s - job.elapsed_s))} left`;
+    const next = st.test === p.next && !busy;
+    const btn = st.status === "running" ? "" : next
+      ? `<button class="btn" data-start="${esc(st.test)}">Start this test</button>`
+      : `<button class="ghost" data-start="${esc(st.test)}"${busy ? " disabled" : ""}>${st.done || st.status === "failed" ? "Run again" : "Start"}</button>`;
+    const pick = st.test === "pick" && p.pick ? `<div class="pickbox"><p><b>${p.pick.applied ? "Applied." : "Latest pick."}</b> ${esc(p.pick.text)}</p>` +
+      (p.pick.applied ? "" : `<button class="btn small" id="pick-apply">Apply to iRacing</button>`) + "</div>" : "";
+    return `<li class="stepcard card ${next ? "next" : ""} ${esc(st.status)}"><div class="num">${i + 1}</div><div class="body">` +
+      `<div class="head"><h2>${esc(st.label)}</h2><span class="tag ${cls}">${esc(word)}</span></div>` +
+      `<p>${esc(st.about)}</p>` +
+      (st.result ? `<p class="result-line">${esc(st.result)}</p>` : "") +
+      `<p class="needs"><b>From you:</b> ${esc(st.needs)}</p><p class="why">${esc(st.takes)}</p>${pick}</div>` +
+      `<div class="go">${btn}</div></li>`;
+  }).join("");
+  document.querySelectorAll("[data-start]").forEach(b => { if (!b.closest("#stepcards")) b.disabled = busy; });
 }
 async function applyPick() {
   const ok = await dialog({title: "Apply the pick to iRacing?", html: "<p>Close iRacing first. Your current settings are backed up, and you can restore them from the Backups tab.</p>", ok: "Apply"});
@@ -184,7 +199,6 @@ function drawChart() {
 }
 
 // ------------------------------------------------------------------ tests
-function chosenTest() { return document.querySelector("input[name=test]:checked").value; }
 function lengths() {
   return {seconds: Number($("len-seconds").value), runs: Number($("len-runs").value), warmup: Number($("len-warmup").value)};
 }
@@ -229,6 +243,7 @@ async function startTest(test, extra = {}) {
     return;
   }
   $("run-log").innerHTML = "";
+  show("testsview");
   showJob({title: r.title, state: "running", progress: 0, elapsed_s: 0, eta_s: r.eta_min * 60, logs: []});
   startLoop();
 }
@@ -255,7 +270,7 @@ function showJob(j, fromView = false) {
     if (j.seq <= lastSeq) return;  // older than what's on screen
     lastSeq = j.seq;
   }
-  $("start-card").hidden = true; $("run-card").hidden = false;
+  $("run-card").hidden = false;
   $("run-title").textContent = j.title;
   const pct = Math.round((j.progress || 0) * 100);
   $("run-bar").firstElementChild.style.width = pct + "%";
@@ -270,6 +285,7 @@ function showJob(j, fromView = false) {
   ul.innerHTML = (j.logs || []).map(l => `<li><span>${esc(l.t)}</span>${esc(l.text)}</li>`).join("");
   ul.scrollTop = ul.scrollHeight;
   if (running) startLoop();
+  if (PK) renderSteps(PK, j);
 }
 function startLoop() {
   if (!loop) loop = setInterval(tick, 1500);
@@ -301,7 +317,7 @@ async function poll() {
   clearInterval(loop); loop = null;
   if (finishedSeen === j.id) return;
   finishedSeen = j.id;
-  if (j.state === "done" && j.result && screen !== "tune") show("tune");
+  if (j.state === "done" && j.result && screen !== "testsview") show("testsview");
   refresh();  // new results; the result panel stays until Close
 }
 
@@ -331,20 +347,13 @@ async function refresh() { render(await call("view")); }
 function wire() {
   document.querySelectorAll(".nav").forEach(b => b.addEventListener("click", () => show(b.dataset.screen)));
   $("min-fps").addEventListener("change", e => call("set_min_fps", +e.target.value));
-  $("pick-apply").addEventListener("click", applyPick);
-  $("picker-next").addEventListener("click", e => startTest(e.target.dataset.test));
+  $("to-tests").addEventListener("click", () => show("testsview"));
   $("go").addEventListener("click", () => {
     const n = V.next;
     startTest(n.test, n.test === "guided" ? {a: n.a, b: n.b} : {});
   });
-  $("other-tests").addEventListener("click", e => {
-    const box = $("tests-box"); box.hidden = !box.hidden;
-    e.target.setAttribute("aria-expanded", !box.hidden);
-  });
-  document.querySelectorAll("input[name=test]").forEach(r => r.addEventListener("change", () => { $("ab-names").hidden = chosenTest() !== "guided"; }));
-  $("go-chosen").addEventListener("click", () => startTest(chosenTest()));
   $("run-stop").addEventListener("click", () => call("stop"));
-  $("run-close").addEventListener("click", () => { dismissedJob = $("run-card").dataset.job; $("run-card").hidden = true; $("start-card").hidden = false; });
+  $("run-close").addEventListener("click", () => { dismissedJob = $("run-card").dataset.job; $("run-card").hidden = true; });
   $("run-report").addEventListener("click", async () => {
     const r = await call("open_report", $("run-report").dataset.id);
     if (!r.ok) toast(r.error || "Couldn't open the report.");
@@ -380,13 +389,15 @@ function wire() {
     r.ok ? (toast("Backup saved.", true), refresh()) : toast(r.error || "Backup failed.");
   });
   document.body.addEventListener("click", async e => {
+    const st = e.target.closest("[data-start]");
+    if (st && !st.disabled) { startTest(st.dataset.start); return; }
+    if (e.target.closest("#pick-apply")) { applyPick(); return; }
     const a = e.target.closest("[data-action]"), rep = e.target.closest("[data-report]"), rs = e.target.closest("[data-restore]");
     if (a) {
       const id = a.dataset.action;
       if (id === "relaunch_admin") relaunch();
       else if (id.startsWith("test:")) {
         const [, test, A, B, W] = id.split(":");
-        if (screen !== "tune") show("tune");
         startTest(test, test === "guided" ? {a: A, b: B, where: W} : {});
       }
     } else if (rep) {
@@ -422,7 +433,7 @@ async function boot() {
   await refresh();
   watchUpdate();
   const m = location.hash.slice(1);
-  if (["tune", "audit", "results", "backups"].includes(m)) show(m);
+  if (["tune", "testsview", "audit", "results", "backups"].includes(m)) show(m);
 }
 boot();
 })();

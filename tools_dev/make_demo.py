@@ -10,16 +10,18 @@ from test_audit import sample  # noqa: E402
 
 with tempfile.TemporaryDirectory() as d:
     v = dashboard.view(history_dir(Path(d)) / "bench", 1, None, "NEW_SIM_PC · RTX 5080")
+with tempfile.TemporaryDirectory() as d:
+    from test_ui import make_api  # noqa: E402
+    for name, data in {"restart_check.json": {"t": "2026-11-28T20:10:00", "passed": True,
+                                              "text": "Passed: a restart alone doesn't change the numbers."},
+                       "floor_check.json": {"t": "2026-11-28T20:40:00", "verdict": "reachable",
+                                            "text": "120 FPS is reachable with graphics: lowest settings hold a 1% "
+                                                    "low of 141, yours 98."},
+                       "start_points.json": {"88766485": {"frame": 250000}}}.items():
+        (Path(d) / name).write_text(json.dumps(data), encoding="utf-8")
+    PICKER = make_api(Path(d))._picker_state()
 v.update(version="demo", focus_labels=list(abtest.FOCUS_LABELS), job=None, notice="",
-         picker={"min_fps": 120, "next": "pick", "pick": {"name": "Your settings, 80 cap", "applied": False,
-                 "text": "Pick: Your settings, 80 cap (80 FPS, smooth). It's under 120. Before keeping it, drive a "
-                         "few laps on it and on the best 120 option, and choose by feel.", "changes": {}},
-                 "steps": [{"test": "floorprobe", "label": "Graphics floor check", "done": True,
-                            "result": "Graphics alone can't reach 120 FPS on this replay: even the lowest settings "
-                                      "only hold a 1% low of 108 (yours 98)."},
-                           {"test": "costrank", "label": "What costs the most frames", "done": True,
-                            "result": "MSAA 4x to 2x (real gain) Shadows off (real gain) Car detail one step lower"},
-                           {"test": "pick", "label": "Pick my graphics", "done": False, "result": ""}]},
+         picker=PICKER,
          backups={"available": True, "locked": True, "folder": r"C:\Users\you\Documents\iRacing",
                   "items": [{"id": "20261126_154101_original", "when": "26 Nov 2026, 3:41 PM",
                              "why": "Your settings before the app changed anything", "original": True,
