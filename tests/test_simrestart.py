@@ -159,3 +159,14 @@ def test_restart_check_restarts_at_every_switch(tmp_path):
     assert api.start("restart", {"seconds": 0.2, "runs": 3, "warmup": 0})["ok"]
     assert wait_done(api)["state"] == "done"
     assert len(sim.seen) == 4 and f.read_text(encoding="utf-8") == INI
+
+
+def test_plain_key_changes_race_and_replay_copies(tmp_path):
+    """iRacing uses [Replay Graphics] while showing a replay, so a test on a replay must change that copy too."""
+    f = ini_dir(tmp_path) / "rendererDX11Monitor.ini"
+    sw = iniswitch.IniSwitch(tmp_path, f, running=lambda: False)
+    sw.set({"MSAA": "0"})
+    txt = f.read_text(encoding="utf-8")
+    assert "[Graphics]\nShadowMapSize=2048 ; shadow detail\nMSAA=0\n[Replay]\nMSAA=0\n" == txt
+    assert sw.restore() == {"Graphics/MSAA": "4", "Replay/MSAA": "4"}
+    assert f.read_text(encoding="utf-8") == INI
