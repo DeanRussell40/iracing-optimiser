@@ -194,3 +194,31 @@ def test_bench_flags_replay_not_playing(tmp_path):
     s = json.loads((bdir / "summary.json").read_text(encoding="utf-8"))
     assert all(not r["window"]["valid"] for r in s["runs"])
     assert s["repeatability"]["verdict"] == "insufficient"
+
+
+def test_bench_stops_when_the_recorder_dies(tmp_path):
+    """A recorder that quits (as PresentMon did when the sim restarted) must stop the test, not leave it running
+    on with empty runs."""
+    class Dies(FakeCapture):
+        n = 0
+        def running(self):
+            Dies.n += 1
+            return Dies.n < 2
+    cfg = bench.BenchConfig(seconds=0.2, runs=3, warmup_runs=0, settle_s=0.0, lead_trim_s=0.0)
+    with pytest.raises(RuntimeError, match="stopped during run 2/3"):
+        bench.run_bench(cfg, tmp_path, FakeDriver(), Dies, log=lambda s: None, sampler=NoGpu(), fingerprint=dict)
+
+
+def test_bench_stops_when_nothing_is_recorded_twice(tmp_path):
+    class Silent(FakeCapture):
+        def running(self): return True
+        def size(self): return 500  # never grows
+    cfg = bench.BenchConfig(seconds=0.2, runs=3, warmup_runs=0, settle_s=0.0, lead_trim_s=0.0)
+    with pytest.raises(RuntimeError, match="no frames in two runs"):
+        bench.run_bench(cfg, tmp_path, FakeDriver(), Silent, log=lambda s: None, sampler=NoGpu(), fingerprint=dict)
+
+
+def test_presentmon_follows_the_sim_across_restarts():
+    import inspect
+    from iroptimizer import presentmon
+    assert '"--terminate_on_proc_exit"' not in inspect.getsource(presentmon.Capture.start)
