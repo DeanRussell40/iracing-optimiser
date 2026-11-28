@@ -197,6 +197,18 @@ def prepare_env_for_shell_launch() -> None:
     os.environ.update(clean)
 
 
+def run_elevated(exe, args: list[str] | None = None) -> bool:
+    """Starts exe through the UAC prompt with a clean environment. Returns whether it was launched."""
+    if not is_windows():
+        return False
+    import ctypes
+    import subprocess
+    prepare_env_for_shell_launch()
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), subprocess.list2cmdline(args or []),
+                                             os.path.dirname(str(exe)) or None, 1)
+    return rc > 32
+
+
 def relaunch_as_admin(args: list[str] | None = None) -> bool:
     """Starts a new elevated copy of this app (UAC prompt). Returns whether it was launched."""
     if not is_windows():

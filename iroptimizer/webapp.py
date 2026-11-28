@@ -559,7 +559,8 @@ class Api:
         except Exception as e:
             u["state"], u["error"] = "ready", str(e)
             applog.get().exception("update failed")
-            return {"ok": False, "error": f"Update failed, nothing was changed: {e}"}
+            msg = str(e) if "is installed" in str(e) else f"Update failed, nothing was changed: {e}"
+            return {"ok": False, "error": msg}
         u["state"] = "done"
         applog.get().info("update installed, restarting into %s", u.get("sha", "")[:12])
         if self._window is not None:

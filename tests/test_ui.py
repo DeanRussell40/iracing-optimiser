@@ -466,3 +466,28 @@ def test_poll_snapshot_advances_and_next_test_can_start(tmp_path):
     assert api.poll()["job"]["elapsed_s"] == el  # the clock stops when the test ends
     assert api.start("repeat", {"seconds": 0.3, "runs": 3, "warmup": 0})["ok"]
     assert wait_done(api)["state"] == "done"
+
+
+def test_update_launch_falls_back_to_uac_when_admin_is_required(tmp_path):
+    from iroptimizer import selfupdate
+    exe = tmp_path / "iRacingOptimizer.exe"
+    started, elevated = [], []
+
+    def plain(cmd, **kw):  # an elevated copy: the plain start works and keeps admin
+        started.append(cmd)
+    selfupdate._launch(exe, popen=plain, elevate=lambda e: elevated.append(e) or True)
+    assert started == [[str(exe)]] and not elevated
+
+    def refused(cmd, **kw):  # a non-admin copy starting an exe that asks for admin
+        e = OSError("The requested operation requires elevation")
+        e.winerror = selfupdate.ELEVATION_REQUIRED
+        raise e
+    selfupdate._launch(exe, popen=refused, elevate=lambda e: elevated.append(e) or True)
+    assert elevated == [exe]
+    with pytest.raises(RuntimeError, match="installed"):
+        selfupdate._launch(exe, popen=refused, elevate=lambda e: False)
+
+    def other(cmd, **kw):
+        raise OSError(2, "missing")
+    with pytest.raises(OSError):
+        selfupdate._launch(exe, popen=other, elevate=lambda e: True)
