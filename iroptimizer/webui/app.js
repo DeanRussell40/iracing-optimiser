@@ -102,9 +102,7 @@ function render(v) {
     (f.action ? `<button class="ghost" data-action="${esc(f.action.id)}">${esc(f.action.label)}</button>` : "<span></span>") + "</li>").join("");
   $("go").textContent = v.next.label;
   $("go-why").textContent = v.next.why;
-  const fv = v.focus.value;
-  $("focus").value = fv;
-  setPick(fv);
+  renderPicker(v.picker);
   if (v.notice) toast(v.notice, true);
   // results
   $("headline").textContent = v.headline;
@@ -119,9 +117,27 @@ function render(v) {
   renderBackups(v.backups);
   if (v.job) showJob(v.job, true);
 }
-function setPick(n) {
-  $("pick-label").textContent = V ? V.focus_labels[n] : "";
-  $("pick-text").textContent = V ? V.focus.pick : "";
+function renderPicker(p) {
+  if (!p) return;
+  if (document.activeElement !== $("min-fps")) $("min-fps").value = p.min_fps;
+  $("picker-steps").innerHTML = p.steps.map(st =>
+    `<li class="${st.done ? "done" : ""}"><b>${esc(st.label)}</b>${st.done ? (st.result ? ` ${esc(st.result)}` : " Done.") : " Not run yet."}</li>`).join("");
+  const nx = p.steps.find(st => st.test === p.next);
+  $("picker-next").hidden = !nx;
+  if (nx) { $("picker-next").textContent = `Run next: ${nx.label}`; $("picker-next").dataset.test = nx.test; }
+  $("picker-pick").hidden = !p.pick;
+  if (p.pick) {
+    $("pick-name").textContent = p.pick.applied ? "Applied." : "Latest pick.";
+    $("pick-text").textContent = p.pick.text;
+    $("pick-apply").hidden = p.pick.applied;
+  }
+}
+async function applyPick() {
+  const ok = await dialog({title: "Apply the pick to iRacing?", html: "<p>Close iRacing first. Your current settings are backed up, and you can restore them from the Backups tab.</p>", ok: "Apply"});
+  if (!ok) return;
+  const r = await call("apply_pick");
+  toast(r.ok ? r.text : (r.error || "Couldn't apply the pick."), r.ok);
+  refresh();
 }
 function renderBackups(b) {
   if (!b || !b.available) {
@@ -314,8 +330,9 @@ async function refresh() { render(await call("view")); }
 // ------------------------------------------------------------------ events
 function wire() {
   document.querySelectorAll(".nav").forEach(b => b.addEventListener("click", () => show(b.dataset.screen)));
-  $("focus").addEventListener("input", e => setPick(+e.target.value));
-  $("focus").addEventListener("change", e => call("set_focus", +e.target.value));
+  $("min-fps").addEventListener("change", e => call("set_min_fps", +e.target.value));
+  $("pick-apply").addEventListener("click", applyPick);
+  $("picker-next").addEventListener("click", e => startTest(e.target.dataset.test));
   $("go").addEventListener("click", () => {
     const n = V.next;
     startTest(n.test, n.test === "guided" ? {a: n.a, b: n.b} : {});

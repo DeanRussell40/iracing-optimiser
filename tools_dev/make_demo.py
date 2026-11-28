@@ -11,6 +11,15 @@ from test_audit import sample  # noqa: E402
 with tempfile.TemporaryDirectory() as d:
     v = dashboard.view(history_dir(Path(d)) / "bench", 1, None, "NEW_SIM_PC · RTX 5080")
 v.update(version="demo", focus_labels=list(abtest.FOCUS_LABELS), job=None, notice="",
+         picker={"min_fps": 120, "next": "pick", "pick": {"name": "Your settings, 80 cap", "applied": False,
+                 "text": "Pick: Your settings, 80 cap (80 FPS, smooth). It's under 120. Before keeping it, drive a "
+                         "few laps on it and on the best 120 option, and choose by feel.", "changes": {}},
+                 "steps": [{"test": "floorprobe", "label": "Graphics floor check", "done": True,
+                            "result": "Graphics alone can't reach 120 FPS on this replay: even the lowest settings "
+                                      "only hold a 1% low of 108 (yours 98)."},
+                           {"test": "costrank", "label": "What costs the most frames", "done": True,
+                            "result": "MSAA 4x to 2x (real gain) Shadows off (real gain) Car detail one step lower"},
+                           {"test": "pick", "label": "Pick my graphics", "done": False, "result": ""}]},
          backups={"available": True, "locked": True, "folder": r"C:\Users\you\Documents\iRacing",
                   "items": [{"id": "20261126_154101_original", "when": "26 Nov 2026, 3:41 PM",
                              "why": "Your settings before the app changed anything", "original": True,
@@ -23,7 +32,8 @@ let job = null, t0 = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 window.DEMO_API = {
   view: async () => ({...VIEW, job}),
-  set_focus: async () => ({ok: true}),
+  set_focus: async () => ({ok: true}), set_min_fps: async () => ({ok: true}),
+  apply_pick: async () => ({ok: true, text: "Applied: Your settings, 80 cap. Your old settings are saved as a backup."}),
   scan_background: async () => { await sleep(1200); return {ok: true, apps: [{name: "SimHubWPF.exe", cores: 0.9}, {name: "simmixer.exe", cores: 0.35}, {name: "pythonw.exe", cores: 0.06}]}; },
   start: async (test, o) => { t0 = Date.now(); job = {title: test === "guided" ? `${o.b} vs ${o.a}` : test === "background" ? "Background apps: running vs paused" : "Measure my PC", state: "running", logs: [], eta_s: 720}; return {ok: true, title: job.title, eta_min: 12}; },
   poll: async () => { if (!job) return {job: null}; const el = (Date.now() - t0) / 1000;

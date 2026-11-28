@@ -142,6 +142,8 @@ def run_metrics(frames: list[Frame]) -> dict:
         "low1_fps": 1000 / p99,
         "low01_fps": 1000 / p999,
         "pacing_error_ms": pacing,
+        # share of frames that arrive on the steady beat (within 1 ms of the median): near 100% when a cap holds
+        "on_time_pct": 100 * sum(1 for f in fts if f <= p50 + 1.0) / len(fts),
         "stutters": (st := count_stutters(fts)),
         "stutters_per_min": st / max(1e-6, sum(fts) / 60000),
     }
